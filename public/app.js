@@ -43,6 +43,107 @@ function toast(msg) {
   }, 2400);
 }
 
+// ---------- Home Screen & PWA Integration ----------
+let homeScreenStatus = 'unknown';
+
+function initHomeScreen() {
+  if (tg && typeof tg.checkHomeScreenStatus === 'function') {
+    try {
+      tg.checkHomeScreenStatus((status) => {
+        homeScreenStatus = status;
+      });
+      tg.onEvent?.('homeScreenAdded', () => {
+        homeScreenStatus = 'added';
+        toast('Added to Home Screen!');
+      });
+      tg.onEvent?.('homeScreenChecked', (status) => {
+        homeScreenStatus = status;
+      });
+    } catch {}
+  }
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    window.deferredInstallPrompt = e;
+  });
+
+  window.addEventListener('appinstalled', () => {
+    homeScreenStatus = 'added';
+    window.deferredInstallPrompt = null;
+    toast('Cinema Party added to Home Screen');
+  });
+}
+
+initHomeScreen();
+
+function openAddToHomeGuideSheet() {
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  openSheet(`
+    <h2 class="sheet-title display">Add to Home Screen</h2>
+    <div style="display:flex; align-items:center; gap:16px; margin-bottom:20px;">
+      <img src="/icon-512.png" alt="Cinema Party Icon" style="width:60px; height:60px; border-radius:16px; border:1px solid var(--border); box-shadow:0 4px 16px rgba(0,0,0,0.5);">
+      <div>
+        <div style="font-weight:700; font-size:16px;">Cinema Party</div>
+        <div style="color:var(--muted); font-size:13px;">Full-screen phone shortcut</div>
+      </div>
+    </div>
+
+    <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:16px; padding:16px; margin-bottom:14px;">
+      <div style="font-weight:600; font-size:14px; margin-bottom:8px; color:var(--text);">In Telegram:</div>
+      <ol style="margin-left:18px; color:var(--muted); font-size:13px; line-height:1.6;">
+        <li>Tap the three dots (<strong>⋮</strong>) in the top-right corner of this screen.</li>
+        <li>Select <strong>Add to Home screen</strong>.</li>
+        <li>Tap <strong>Add</strong> to pin the icon directly to your phone screen.</li>
+      </ol>
+      <div style="margin-top:10px; font-size:12px; color:var(--muted); line-height:1.4;">
+        Note: If you don't see this option in the menu, open the bot via its direct Mini App link <code>t.me/cine_party_bot/cinema</code>.
+      </div>
+    </div>
+
+    <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:16px; padding:16px; margin-bottom:18px;">
+      <div style="font-weight:600; font-size:14px; margin-bottom:8px; color:var(--text);">In Browser:</div>
+      <div style="color:var(--muted); font-size:13px; line-height:1.6;">
+        ${
+          isIos
+            ? 'Tap the <strong>Share</strong> button at the bottom (box with upward arrow) &rarr; select <strong>Add to Home Screen</strong>.'
+            : 'Tap the <strong>Menu (⋮)</strong> &rarr; select <strong>Add to Home screen</strong> or <strong>Install App</strong>.'
+        }
+      </div>
+    </div>
+
+    <button type="button" class="btn primary" id="gotItGuideBtn">Got It</button>
+  `);
+
+  document.querySelector('#gotItGuideBtn')?.addEventListener('click', closeSheet);
+}
+
+function requestAddToHomeScreen() {
+  haptic('medium');
+
+  if (tg && typeof tg.addToHomeScreen === 'function') {
+    try {
+      tg.addToHomeScreen();
+      return;
+    } catch (e) {
+      console.warn('Telegram addToHomeScreen call failed', e);
+    }
+  }
+
+  if (window.deferredInstallPrompt) {
+    window.deferredInstallPrompt.prompt();
+    window.deferredInstallPrompt.userChoice?.then((choice) => {
+      if (choice.outcome === 'accepted') {
+        homeScreenStatus = 'added';
+        toast('Added to Home Screen');
+      }
+      window.deferredInstallPrompt = null;
+    });
+    return;
+  }
+
+  openAddToHomeGuideSheet();
+}
+
 // ---------- Accent Customization ----------
 const DEFAULT_ACCENT = '#D71921';
 const PRESET_SWATCHES = [
@@ -259,6 +360,54 @@ function emptyMessage() {
   return `${esc(otherMemberName())} has not added any personal movies yet.`;
 }
 
+function refreshMoviesContainer() {
+  const container = $app.querySelector('#moviesContainer');
+  if (!container) return;
+  const list = visibleMovies();
+  container.innerHTML = list.length
+    ? `<div class="grid">${list.map(renderCard).join('')}</div>`
+    : `
+      <div class="empty-box">
+        <div class="dotted-illustration">
+          <span></span><span></span><span></span><span></span>
+          <span></span><span class="active"></span><span></span><span></span>
+          <span></span><span></span><span class="active"></span><span></span>
+          <span></span><span></span><span></span><span></span>
+        </div>
+        <div class="empty-text">${emptyMessage()}</div>
+      </div>
+    `;
+
+  container.querySelectorAll('.card').forEach((c) => {
+    c.onclick = () => {
+      haptic('light');
+      openMovieDetail(Number(c.dataset.id));
+    };
+  });
+}
+
+function switchTab(newTab) {
+  if (state.tab === newTab) return;
+  state.tab = newTab;
+  $app.querySelectorAll('[data-tab]').forEach((b) => {
+    b.classList.toggle('active', b.dataset.tab === newTab);
+  });
+  const fab = $app.querySelector('#fabBtn');
+  if (fab) {
+    fab.style.display = state.tab === 'others' ? 'none' : 'grid';
+  }
+  refreshMoviesContainer();
+}
+
+function switchStatus(newStatus) {
+  if (state.status === newStatus) return;
+  state.status = newStatus;
+  $app.querySelectorAll('[data-status]').forEach((b) => {
+    b.classList.toggle('active', b.dataset.status === newStatus);
+  });
+  refreshMoviesContainer();
+}
+
 function render() {
   if (state.loading) {
     $app.innerHTML = '<div class="spinner">Loading...</div>';
@@ -315,6 +464,7 @@ function render() {
         <button class="seg-btn ${state.status === 'watched' ? 'active' : ''}" data-status="watched">Watched</button>
       </div>
 
+      <div id="moviesContainer">
       ${
         list.length
           ? `<div class="grid">${list.map(renderCard).join('')}</div>`
@@ -330,6 +480,7 @@ function render() {
             </div>
           `
       }
+      </div>
     </div>
 
     ${
@@ -356,16 +507,14 @@ function render() {
   $app.querySelectorAll('[data-tab]').forEach((b) => {
     b.onclick = () => {
       haptic('light');
-      state.tab = b.dataset.tab;
-      render();
+      switchTab(b.dataset.tab);
     };
   });
 
   $app.querySelectorAll('[data-status]').forEach((b) => {
     b.onclick = () => {
       haptic('light');
-      state.status = b.dataset.status;
-      render();
+      switchStatus(b.dataset.status);
     };
   });
 
@@ -1015,9 +1164,22 @@ function openProfileSheet() {
     }
 
     <div class="section-divider"></div>
+    <div class="form-label" style="margin-bottom:12px;">App &amp; Shortcuts</div>
+    <button type="button" class="btn" id="addToHomeBtn" style="gap:10px;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5" y="2" width="14" height="20" rx="3" ry="3"></rect>
+        <line x1="12" y1="18" x2="12.01" y2="18"></line>
+      </svg>
+      <span>Add to Home Screen</span>
+    </button>
+    <div style="color:var(--muted); font-size:12px; margin-top:8px; line-height:1.4;">
+      Pin Cinema Party to your phone's home screen for instant full-screen access.
+    </div>
+
+    <div class="section-divider"></div>
     <div class="form-label">About</div>
     <div class="about-text">
-      Cinema Party v1.1.0<br>
+      Cinema Party v1.2.0<br>
       Minimalist movie tracker with editorial serif typography.<br><br>
       Powered by open source movie catalog.
     </div>
@@ -1086,6 +1248,24 @@ function openProfileSheet() {
     haptic('medium');
     toast('Accent reset to default');
   };
+
+  const addHomeBtn = s.querySelector('#addToHomeBtn');
+  if (addHomeBtn) {
+    if (homeScreenStatus === 'added') {
+      addHomeBtn.innerHTML = `
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+        <span>Added to Home Screen</span>
+      `;
+      addHomeBtn.disabled = true;
+      addHomeBtn.style.opacity = '0.65';
+    } else {
+      addHomeBtn.onclick = () => {
+        requestAddToHomeScreen();
+      };
+    }
+  }
 
   if (p) {
     s.querySelector('#savePartyRenameBtn').onclick = async () => {

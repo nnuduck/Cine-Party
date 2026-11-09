@@ -28,7 +28,8 @@ cinema-party/
     app.js                # Frontend client logic & state
     styles.css            # Dark theme styling & CSS variables
     manifest.webmanifest  # PWA web manifest
-    icon.svg              # App icon
+    icon.svg              # App vector icon
+    icon-512.png          # App icon (512x512 PNG for BotFather & Home Screen)
   src/
     worker.js             # Worker entrypoint, API router, asset handler
     auth.js               # Telegram initData signature validation & auth middleware
@@ -124,21 +125,27 @@ node scripts/set-webhook.mjs <WORKER_URL> <BOT_TOKEN> <WEBHOOK_SECRET>
 ```
 This sets the webhook to `<worker-url>/telegram` and adds the permanent "Movies" button in the bot chat.
 
-### Step 7: Configure @BotFather (Optional Direct Mini App Link)
-1. Open [@BotFather](https://t.me/BotFather) in Telegram.
-2. Send `/newapp`.
-3. Select your bot.
-4. Enter title (e.g. `Cinema Party`), description, and upload an icon (`public/icon.svg`).
-5. Provide the Web App URL: `https://cinema-party.<your-subdomain>.workers.dev`.
-6. Choose a short name, for example `cinema`.
-7. Put your bot username and short name into `wrangler.jsonc`:
+### Step 7: Configure @BotFather (Bot Avatar & Native Home Screen Shortcut)
+1. **Set Bot Avatar**:
+   - In [@BotFather](https://t.me/BotFather), send `/setuserpic`, select your bot, and send `bot-avatar.png` (or `public/icon-512.png`).
+2. **Register Mini App for Native Home Screen**:
+   - Send `/newapp` (or `/editapp`).
+   - Select your bot (`@cine_party_bot`).
+   - Enter title (`Cinema Party`) and short description.
+   - Upload the 512x512 app icon (`public/icon-512.png`).
+   - (Optional demo: send `/empty`).
+   - Provide the Web App URL: `https://cinema-party.<your-subdomain>.workers.dev`.
+   - Choose a short name, for example `cinema`.
+   - BotFather will provide the direct Mini App link: `https://t.me/your_bot_username/cinema`.
+   - Opening this link in Telegram enables the native **"Add to Home Screen"** option in Telegram's top `⋮` menu, allowing one-tap installation on Android and iOS desktop!
+3. Put your bot username and short name into `wrangler.jsonc`:
    ```jsonc
    "vars": {
      "BOT_USERNAME": "your_bot_username",
      "APP_SHORT_NAME": "cinema"
    }
    ```
-   and redeploy (`npm run deploy`). Now you have a direct link: `https://t.me/your_bot_username/cinema`!
+   and redeploy (`npm run deploy`).
 
 ---
 

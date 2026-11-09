@@ -11,6 +11,9 @@
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-smooth: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 * {
@@ -73,11 +76,12 @@ button {
   border-radius: 20px;
   padding: 8px 14px;
   text-align: left;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.18s ease, transform 0.14s var(--ease-spring);
 }
 
 .party-selector:active {
   border-color: var(--muted);
+  transform: scale(0.985);
 }
 
 .party-name {
@@ -139,11 +143,12 @@ button {
   font-weight: 600;
   color: var(--text);
   flex: none;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.18s ease, transform 0.14s var(--ease-spring);
 }
 
 .avatar-btn:active {
   border-color: var(--muted);
+  transform: scale(0.94);
 }
 
 .avatar-btn img {
@@ -163,11 +168,12 @@ button {
   place-items: center;
   color: var(--text);
   flex: none;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.18s ease, transform 0.14s var(--ease-spring);
 }
 
 .icon-btn:active {
   border-color: var(--muted);
+  transform: scale(0.94);
 }
 
 .icon-btn svg {
@@ -203,20 +209,25 @@ button {
   font-size: 15px;
   white-space: nowrap;
   min-width: 0;
-  transition: color 0.15s ease;
+  transition: color 0.22s var(--ease-spring), transform 0.12s var(--ease-spring);
+}
+
+.tab:active {
+  transform: scale(0.96);
 }
 
 .tab span {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
+  pointer-events: none;
 }
 
 .tab.active {
   color: var(--text);
 }
 
-.tab.active::after {
+.tab::after {
   content: '';
   position: absolute;
   bottom: -1px;
@@ -224,6 +235,15 @@ button {
   right: 0;
   height: 2px;
   background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: center;
+  opacity: 0;
+  transition: transform 0.26s var(--ease-spring), opacity 0.2s ease;
+}
+
+.tab.active::after {
+  transform: scaleX(1);
+  opacity: 1;
 }
 
 /* ---------- Segmented Control ---------- */
@@ -244,12 +264,17 @@ button {
   font-weight: 600;
   color: var(--muted);
   text-align: center;
-  transition: all 0.15s ease;
+  transition: color 0.2s var(--ease-spring), background-color 0.24s var(--ease-spring), transform 0.12s var(--ease-spring);
+}
+
+.seg-btn:active {
+  transform: scale(0.97);
 }
 
 .seg-btn.active {
   background: var(--surface-2);
   color: var(--text);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
 /* ---------- Movie Grid ---------- */
@@ -257,6 +282,8 @@ button {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 12px;
+  animation: gridFadeSlide 0.28s var(--ease-spring) both;
+  will-change: transform, opacity;
 }
 
 @media (min-width: 520px) {
@@ -271,10 +298,12 @@ button {
   display: flex;
   flex-direction: column;
   width: 100%;
+  transition: transform 0.16s var(--ease-spring), opacity 0.15s ease;
 }
 
 .card:active {
-  opacity: 0.85;
+  transform: scale(0.965);
+  opacity: 0.88;
 }
 
 .poster-box {
@@ -286,6 +315,11 @@ button {
   display: grid;
   place-items: center;
   position: relative;
+  transition: border-color 0.2s var(--ease-spring), transform 0.16s var(--ease-spring);
+}
+
+.card:active .poster-box {
+  border-color: var(--muted);
 }
 
 .poster-box img {
@@ -360,6 +394,19 @@ button {
   text-align: center;
   padding: 64px 20px;
   color: var(--muted);
+  animation: gridFadeSlide 0.28s var(--ease-spring) both;
+  will-change: transform, opacity;
+}
+
+@keyframes gridFadeSlide {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .dotted-illustration {
@@ -402,7 +449,8 @@ button {
   place-items: center;
   z-index: 10;
   border: 0;
-  transition: transform 0.15s ease;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
+  transition: transform 0.18s var(--ease-spring), background-color 0.2s ease;
 }
 
 .fab:active {
@@ -423,13 +471,14 @@ button {
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   z-index: 40;
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  animation: fadeIn 0.15s ease;
+  animation: fadeIn 0.22s var(--ease-smooth);
 }
 
 .sheet {
@@ -441,7 +490,8 @@ button {
   border-radius: 24px 24px 0 0;
   padding: 12px 20px calc(var(--safe-bottom) + 24px);
   border-top: 1px solid var(--border);
-  animation: slideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: slideUp 0.32s var(--ease-sheet);
+  will-change: transform;
 }
 
 .drag-handle {
@@ -459,8 +509,8 @@ button {
 }
 
 @keyframes slideUp {
-  from { transform: translateY(60px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
 }
 
 @keyframes fadeIn {
@@ -524,16 +574,18 @@ textarea {
   font-size: 14px;
   font-weight: 600;
   text-align: center;
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text);
-  transition: opacity 0.15s ease, transform 0.1s ease;
+  transition: opacity 0.15s ease, transform 0.12s var(--ease-spring), background-color 0.18s ease;
 }
 
 .btn:active {
-  transform: scale(0.98);
+  transform: scale(0.97);
 }
 
 .btn.primary {
@@ -542,8 +594,12 @@ textarea {
   border-color: transparent;
 }
 
+.btn.primary:active {
+  opacity: 0.88;
+}
+
 .btn.danger {
-  color: #D71921;
+  color: var(--accent);
   background: rgba(215, 25, 33, 0.08);
   border-color: rgba(215, 25, 33, 0.2);
 }

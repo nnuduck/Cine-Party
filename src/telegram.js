@@ -58,7 +58,7 @@ export async function handleTelegramWebhook(request, env) {
       inline_keyboard: [
         [
           {
-            text: 'Open',
+            text: '🎬 Open Cinema',
             web_app: { url: targetUrl },
           },
         ],

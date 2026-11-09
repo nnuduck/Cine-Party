@@ -1,10 +1,45 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#000000"/>
-  <rect x="96" y="160" width="320" height="216" rx="24" fill="#0F0F0F" stroke="#262626" stroke-width="8"/>
-  <circle cx="256" cy="268" r="48" fill="#171717" stroke="#262626" stroke-width="6"/>
-  <circle cx="256" cy="268" r="14" fill="#D71921"/>
-  <circle cx="160" cy="216" r="12" fill="#8A8A8A"/>
-  <circle cx="352" cy="216" r="12" fill="#8A8A8A"/>
-  <circle cx="160" cy="320" r="12" fill="#8A8A8A"/>
-  <circle cx="352" cy="320" r="12" fill="#8A8A8A"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#1A0D0F" stop-opacity="0.9"/>
+      <stop offset="50%" stop-color="#080808" stop-opacity="0.98"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="1"/>
+    </radialGradient>
+    <linearGradient id="crimsonGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF3843"/>
+      <stop offset="100%" stop-color="#D71921"/>
+    </linearGradient>
+    <linearGradient id="silverGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#808080"/>
+    </linearGradient>
+    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#2E2E2E"/>
+      <stop offset="100%" stop-color="#141414"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#glow)"/>
+  <rect x="36" y="36" width="440" height="440" rx="96" fill="none" stroke="url(#borderGrad)" stroke-width="2"/>
+
+  <!-- Outer Rounded Film Frame Card -->
+  <rect x="106" y="116" width="300" height="280" rx="36" fill="#0C0C0C" stroke="#242424" stroke-width="4"/>
+
+  <!-- Sprocket cutouts on sides -->
+  <rect x="88" y="156" width="36" height="20" rx="10" fill="#000000" stroke="#242424" stroke-width="3"/>
+  <rect x="88" y="246" width="36" height="20" rx="10" fill="#000000" stroke="#242424" stroke-width="3"/>
+  <rect x="88" y="336" width="36" height="20" rx="10" fill="#000000" stroke="#242424" stroke-width="3"/>
+
+  <rect x="388" y="156" width="36" height="20" rx="10" fill="#000000" stroke="#242424" stroke-width="3"/>
+  <rect x="388" y="246" width="36" height="20" rx="10" fill="#000000" stroke="#242424" stroke-width="3"/>
+  <rect x="388" y="336" width="36" height="20" rx="10" fill="#000000" stroke="#242424" stroke-width="3"/>
+
+  <!-- Inner Screen Frame -->
+  <rect x="144" y="154" width="224" height="204" rx="22" fill="#141414" stroke="#282828" stroke-width="2"/>
+
+  <!-- Centered Play Triangle with Silver Gradient -->
+  <path d="M232 216 L298 256 L232 296 Z" fill="url(#silverGrad)"/>
+
+  <!-- Top-Right Crimson Recording / Live Dot -->
+  <circle cx="340" cy="180" r="8" fill="url(#crimsonGrad)"/>
 </svg>
