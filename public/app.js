@@ -441,15 +441,23 @@ function render() {
   $app.innerHTML = `
     <div class="screen">
       <header class="topbar">
-        <button class="party-selector" id="partySelectBtn">
-          <div style="min-width:0; flex:1;">
-            <div class="party-name">${esc(p.name)}</div>
-            <div class="party-meta">${membersCount} member${membersCount === 1 ? '' : 's'}</div>
-          </div>
-          <div class="member-avatars">${avatarsHtml}</div>
+        <button class="pill-tablet party-pill" id="partySelectBtn" aria-label="Select Party">
+          <svg class="pill-icon-svg" viewBox="0 0 24 24">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+          <span class="pill-label">${esc(p.name)}</span>
+          <span class="pill-count-badge">· ${membersCount}</span>
+          <svg class="pill-chevron-svg" viewBox="0 0 24 24">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
         </button>
-        <button class="avatar-btn" id="profileBtn" aria-label="Profile">
-          ${userAvatarHtml}
+
+        <button class="pill-tablet profile-pill" id="profileBtn" aria-label="Profile">
+          <div class="pill-avatar-circle">${userAvatarHtml}</div>
+          <span class="pill-label">${esc(state.me?.display_name || state.me?.first_name || 'Profile')}</span>
         </button>
       </header>
 

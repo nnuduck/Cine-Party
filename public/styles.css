@@ -57,56 +57,113 @@ button {
   margin: 0 auto;
 }
 
-/* ---------- Top Bar ---------- */
+/* ---------- Top Bar (Minimalist Telegram/iOS Pill Tablets) ---------- */
 .topbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 18px;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 16px;
 }
 
-.party-selector {
-  flex: 1;
-  min-width: 0;
-  display: flex;
+.pill-tablet {
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 17px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 20px;
-  padding: 8px 14px;
-  text-align: left;
-  transition: border-color 0.18s ease, transform 0.14s var(--ease-spring);
-}
-
-.party-selector:active {
-  border-color: var(--muted);
-  transform: scale(0.985);
-}
-
-.party-name {
+  color: var(--text);
+  font-size: 13px;
   font-weight: 600;
-  font-size: 15px;
   white-space: nowrap;
+  max-width: 58%;
+  transition: transform 0.12s var(--ease-spring), border-color 0.16s ease, background-color 0.16s ease;
+}
+
+.pill-tablet:active {
+  transform: scale(0.96);
+  border-color: var(--muted);
+  background: var(--surface-2);
+}
+
+.pill-tablet.party-pill {
+  padding: 0 10px 0 10px;
+}
+
+.pill-icon-svg {
+  width: 15px;
+  height: 15px;
+  stroke: var(--muted);
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
+.pill-label {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.party-meta {
+.pill-count-badge {
+  font-size: 11px;
   color: var(--muted);
-  font-size: 12px;
+  font-weight: 500;
+  padding-left: 1px;
+  flex-shrink: 0;
 }
 
-.member-avatars {
-  display: flex;
-  align-items: center;
-  margin-left: auto;
-  padding-left: 6px;
+.pill-chevron-svg {
+  width: 12px;
+  height: 12px;
+  stroke: var(--muted);
+  stroke-width: 2.2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+  margin-left: 2px;
 }
 
+.pill-tablet.profile-pill {
+  padding: 0 12px 0 6px;
+  max-width: 40%;
+}
+
+.pill-avatar-circle {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  min-height: 22px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.pill-avatar-circle img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Fallback legacy classes */
 .avatar {
   width: 28px;
   height: 28px;
+  min-width: 28px;
+  min-height: 28px;
   border-radius: 50%;
   background: var(--surface-2);
   border: 2px solid var(--surface);
@@ -130,39 +187,36 @@ button {
   display: block;
 }
 
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
 .member-row .avatar {
-  width: 40px;
-  height: 40px;
-  font-size: 14px;
+  width: 44px !important;
+  height: 44px !important;
+  min-width: 44px !important;
+  min-height: 44px !important;
+  max-width: 44px !important;
+  max-height: 44px !important;
+  border-radius: 50% !important;
+  overflow: hidden !important;
   border: 1px solid var(--border);
-}
-
-.avatar-btn {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  overflow: hidden;
-  display: grid;
-  place-items: center;
   font-size: 15px;
-  font-weight: 600;
-  color: var(--text);
-  flex: none;
-  transition: border-color 0.18s ease, transform 0.14s var(--ease-spring);
+  flex-shrink: 0;
 }
 
-.avatar-btn:active {
-  border-color: var(--muted);
-  transform: scale(0.94);
-}
-
-.avatar-btn img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
+.member-row .avatar img {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 44px !important;
+  max-height: 44px !important;
+  object-fit: cover !important;
+  display: block !important;
+  border-radius: 50% !important;
 }
 
 .icon-btn {
