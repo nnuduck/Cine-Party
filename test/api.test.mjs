@@ -174,6 +174,8 @@ test('9. cover upload, fetch, cleanup', async () => {
   const getRes = await fetch(`${BASE}${upData.url}`);
   assert.equal(getRes.status, 200);
   assert.equal(getRes.headers.get('Content-Type'), 'image/webp');
+  const buf = await getRes.arrayBuffer();
+  assert.equal(buf.byteLength, dummyWebp.byteLength);
 });
 
 test('10. accent setting', async () => {
@@ -189,7 +191,36 @@ test('10. accent setting', async () => {
   assert.equal(meData.user.accent, '#3b82f6');
 });
 
-test('11. rename, delete, leave', async () => {
+test('11. user profile updates', async () => {
+  const res = await fetch(`${BASE}/api/me/profile`, {
+    method: 'PATCH',
+    headers: H_USER1,
+    body: JSON.stringify({ name: 'Alice Walker', avatar_url: 'https://example.com/avatar.jpg' }),
+  });
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(data.user.custom_name, 'Alice Walker');
+  assert.equal(data.user.avatar_url, 'https://example.com/avatar.jpg');
+
+  const meRes = await fetch(`${BASE}/api/me`, { headers: H_USER1 });
+  const meData = await meRes.json();
+  assert.equal(meData.user.display_name, 'Alice Walker');
+  assert.equal(meData.user.avatar_url, 'https://example.com/avatar.jpg');
+});
+
+test('12. movie search open catalog', async () => {
+  const res = await fetch(`${BASE}/api/movies/search?q=Inception`, {
+    headers: H_USER1,
+  });
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.ok(Array.isArray(data.results));
+  assert.ok(data.results.length > 0);
+  assert.equal(data.results[0].title, 'Inception');
+  assert.ok(data.results[0].poster);
+});
+
+test('13. rename, delete, leave', async () => {
   // Rename party
   const r1 = await fetch(`${BASE}/api/parties/${partyId}`, {
     method: 'PATCH',
@@ -213,7 +244,7 @@ test('11. rename, delete, leave', async () => {
   assert.equal(r3.status, 200);
 });
 
-test('12. telegram webhook rejects wrong secret', async () => {
+test('14. telegram webhook rejects wrong secret', async () => {
   const res = await fetch(`${BASE}/telegram`, {
     method: 'POST',
     headers: {

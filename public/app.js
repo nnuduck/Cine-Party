@@ -203,7 +203,13 @@ function visibleMovies() {
   return state.movies.filter((m) => {
     if (m.status !== state.status) return false;
     if (state.tab === 'together') return m.kind === 'together';
-    if (state.tab === 'mine') return m.kind === 'personal' && m.added_by === myId;
+    if (state.tab === 'mine') {
+      if (state.status === 'watched') {
+        // Movies marked watched together also appear in personal Watched list
+        return (m.kind === 'personal' && m.added_by === myId) || m.kind === 'together';
+      }
+      return m.kind === 'personal' && m.added_by === myId;
+    }
     return m.kind === 'personal' && m.added_by !== myId;
   });
 }
@@ -219,7 +225,7 @@ function renderCard(m) {
       : '';
 
   const posterHtml = m.poster
-    ? `<img src="${esc(m.poster)}" alt="${esc(m.title)}" loading="lazy">`
+    ? `<img src="${esc(m.poster)}" alt="${esc(m.title)}" loading="lazy" onerror="this.onerror=null;this.parentElement.innerHTML='<div class=\\'poster-ph\\'>${esc(m.title)}</div>'">`
     : `<div class="poster-ph">${esc(m.title)}</div>`;
 
   let meta = '';
@@ -267,9 +273,19 @@ function render() {
   const p = currentParty();
   const list = visibleMovies();
   const membersCount = (p.members || []).length;
-  const dotsHtml = Array.from({ length: Math.min(membersCount, 5) })
-    .map((_, i) => `<span class="member-dot ${i === 0 ? 'active' : ''}"></span>`)
+  const avatarsHtml = (p.members || [])
+    .slice(0, 3)
+    .map((m) => {
+      if (m.avatar_url) {
+        return `<div class="avatar"><img src="${esc(m.avatar_url)}" alt=""></div>`;
+      }
+      return `<div class="avatar"><span>${esc((m.name || m.first_name || 'F').slice(0, 1).toUpperCase())}</span></div>`;
+    })
     .join('');
+
+  const userAvatarHtml = state.me?.avatar_url
+    ? `<img src="${esc(state.me.avatar_url)}" alt="">`
+    : `<span>${esc((state.me?.display_name || state.me?.first_name || 'U').slice(0, 1).toUpperCase())}</span>`;
 
   const otherTabLabel = otherMemberName();
 
@@ -281,13 +297,10 @@ function render() {
             <div class="party-name">${esc(p.name)}</div>
             <div class="party-meta">${membersCount} member${membersCount === 1 ? '' : 's'}</div>
           </div>
-          <div class="party-dots">${dotsHtml}</div>
+          <div class="member-avatars">${avatarsHtml}</div>
         </button>
-        <button class="icon-btn" id="settingsBtn" aria-label="Settings">
-          <svg viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="3"></circle>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-          </svg>
+        <button class="avatar-btn" id="profileBtn" aria-label="Profile">
+          ${userAvatarHtml}
         </button>
       </header>
 
@@ -334,7 +347,7 @@ function render() {
   `;
 
   $app.querySelector('#partySelectBtn').onclick = openPartySheet;
-  $app.querySelector('#settingsBtn').onclick = openSettingsSheet;
+  $app.querySelector('#profileBtn').onclick = openProfileSheet;
   $app.querySelector('#fabBtn')?.addEventListener('click', () => {
     haptic('medium');
     openMovieEditor();
@@ -539,30 +552,26 @@ function openMovieEditor(movie) {
     <h2 class="sheet-title display">${isEdit ? 'Edit Movie' : 'Add Movie'}</h2>
 
     <div class="seg-control" id="kindControl">
-      <button class="seg-btn ${draft.kind === 'together' ? 'active' : ''}" data-k="together">Together</button>
-      <button class="seg-btn ${draft.kind === 'personal' ? 'active' : ''}" data-k="personal">Mine</button>
+      <button type="button" class="seg-btn ${draft.kind === 'together' ? 'active' : ''}" data-k="together">Together</button>
+      <button type="button" class="seg-btn ${draft.kind === 'personal' ? 'active' : ''}" data-k="personal">Mine</button>
+    </div>
+
+    <div class="form-field">
+      <span class="form-label">Title *</span>
+      <div class="input-wrap">
+        <input type="text" id="movieTitle" placeholder="Start typing movie title..." maxlength="120" autocomplete="off" value="${esc(draft.title)}">
+        <div class="suggestions-box" id="titleSuggestions" hidden></div>
+      </div>
     </div>
 
     <div class="cover-row">
       <div class="cover-preview" id="coverPreview"></div>
       <div class="cover-actions">
-        <button class="btn" id="searchTmdbBtn">Search Cover</button>
-        <button class="btn" id="pickGalleryBtn">From Gallery</button>
-        <button class="btn danger" id="removeCoverBtn" style="padding:10px;">Remove</button>
+        <button type="button" class="btn" id="pickGalleryBtn">From Gallery</button>
+        <button type="button" class="btn danger" id="removeCoverBtn" style="padding:10px;">Remove</button>
         <input type="file" id="coverFileInput" accept="image/*" hidden>
       </div>
     </div>
-
-    <div class="tmdb-panel" id="tmdbPanel" hidden>
-      <input type="search" id="tmdbQuery" placeholder="Search by title..." autocomplete="off">
-      <div class="search-results" id="tmdbResults"></div>
-      <div class="search-status" id="tmdbStatus"></div>
-    </div>
-
-    <label class="form-field">
-      <span class="form-label">Title *</span>
-      <input type="text" id="movieTitle" placeholder="Movie title" maxlength="120">
-    </label>
 
     <div class="form-row">
       <label class="form-field">
@@ -681,65 +690,71 @@ function openMovieEditor(movie) {
     btn.textContent = 'From Gallery';
   };
 
-  // TMDB search
-  let tmdbTimer = null;
-  const executeTmdbSearch = async () => {
-    const query = $('#tmdbQuery').value.trim();
-    const statusBox = $('#tmdbStatus');
-    const resultsBox = $('#tmdbResults');
+  // Live autocomplete search as you type
+  let searchTimer = null;
+  const suggestionsBox = $('#titleSuggestions');
 
-    if (query.length < 2) {
-      resultsBox.innerHTML = '';
-      statusBox.textContent = '';
+  $('#movieTitle').oninput = (e) => {
+    clearTimeout(searchTimer);
+    const val = e.target.value.trim();
+    if (val.length < 2) {
+      suggestionsBox.hidden = true;
+      suggestionsBox.innerHTML = '';
       return;
     }
 
-    statusBox.textContent = 'Searching...';
-    try {
-      const data = await api('/tmdb/search?q=' + encodeURIComponent(query));
-      statusBox.textContent = data.error || (data.results.length ? '' : 'No results found');
-      resultsBox.innerHTML = (data.results || [])
-        .map(
-          (r, idx) => `
-            <button class="search-item" data-idx="${idx}" type="button">
-              <img src="${esc(r.poster)}" alt="" loading="lazy">
-              <div class="search-item-title">${esc(r.title)}</div>
-              <div class="search-item-year">${esc(r.year)}</div>
-            </button>
-          `
-        )
-        .join('');
+    searchTimer = setTimeout(async () => {
+      try {
+        const data = await api('/movies/search?q=' + encodeURIComponent(val));
+        const list = data.results || [];
+        if (!list.length) {
+          suggestionsBox.hidden = true;
+          suggestionsBox.innerHTML = '';
+          return;
+        }
 
-      resultsBox.querySelectorAll('.search-item').forEach((itemBtn) => {
-        itemBtn.onclick = () => {
-          const item = data.results[Number(itemBtn.dataset.idx)];
-          draft.poster = item.poster;
-          if (!$('#movieTitle').value.trim()) $('#movieTitle').value = item.title;
-          if (!$('#movieYear').value.trim() && item.year) $('#movieYear').value = item.year;
-          updateCoverUi();
-          $('#tmdbPanel').hidden = true;
-          haptic('light');
-        };
-      });
-    } catch (err) {
-      statusBox.textContent = err.message;
+        suggestionsBox.innerHTML = list
+          .map(
+            (r, idx) => `
+              <button class="suggestion-item" data-idx="${idx}" type="button">
+                <div class="sug-poster">
+                  ${r.poster ? `<img src="${esc(r.poster)}" alt="" loading="lazy">` : 'NO'}
+                </div>
+                <div class="sug-info">
+                  <div class="sug-title">${esc(r.title)}</div>
+                  <div class="sug-year">${esc(r.year || '')}</div>
+                </div>
+              </button>
+            `
+          )
+          .join('');
+        suggestionsBox.hidden = false;
+
+        suggestionsBox.querySelectorAll('.suggestion-item').forEach((itemBtn) => {
+          itemBtn.onclick = () => {
+            const item = list[Number(itemBtn.dataset.idx)];
+            $('#movieTitle').value = item.title;
+            if (item.year) $('#movieYear').value = item.year;
+            if (item.poster) {
+              draft.poster = item.poster;
+              updateCoverUi();
+            }
+            suggestionsBox.hidden = true;
+            suggestionsBox.innerHTML = '';
+            haptic('light');
+          };
+        });
+      } catch {
+        suggestionsBox.hidden = true;
+      }
+    }, 250);
+  };
+
+  s.addEventListener('click', (e) => {
+    if (!e.target.closest('.input-wrap')) {
+      suggestionsBox.hidden = true;
     }
-  };
-
-  $('#searchTmdbBtn').onclick = () => {
-    const panel = $('#tmdbPanel');
-    panel.hidden = !panel.hidden;
-    if (!panel.hidden) {
-      if (!$('#tmdbQuery').value) $('#tmdbQuery').value = $('#movieTitle').value;
-      $('#tmdbQuery').focus();
-      executeTmdbSearch();
-    }
-  };
-
-  $('#tmdbQuery').oninput = () => {
-    clearTimeout(tmdbTimer);
-    tmdbTimer = setTimeout(executeTmdbSearch, 400);
-  };
+  });
 
   // Save movie
   $('#saveMovieBtn').onclick = async () => {
@@ -794,21 +809,33 @@ function openPartySheet() {
   const link = state.inviteBase ? `${state.inviteBase}${p.code}` : p.code;
 
   const s = openSheet(`
-    <h2 class="sheet-title display">Parties</h2>
-    <div style="font-size:12px; color:var(--muted); text-transform:uppercase; margin-bottom:8px;">Switch Party</div>
-    ${state.parties
-      .map(
-        (x) => `
-          <button class="btn" style="text-align:left; margin-bottom:8px; border-color:${x.id === state.partyId ? 'var(--accent)' : 'var(--border)'};" data-pid="${x.id}">
-            <div style="font-weight:600;">${esc(x.name)}</div>
-            <div style="font-size:12px; color:var(--muted);">${(x.members || []).map((m) => esc(m.first_name)).join(', ')}</div>
-          </button>
-        `
-      )
-      .join('')}
+    <h2 class="sheet-title display">${esc(p.name)}</h2>
+
+    <div class="form-label" style="margin-bottom:8px;">Members in this Room (${(p.members || []).length})</div>
+    <div style="margin-bottom:14px;">
+      ${(p.members || [])
+        .map(
+          (m) => `
+            <div class="member-row">
+              <div class="avatar">
+                ${
+                  m.avatar_url
+                    ? `<img src="${esc(m.avatar_url)}" alt="">`
+                    : `<span>${esc((m.name || m.first_name || 'F').slice(0, 1).toUpperCase())}</span>`
+                }
+              </div>
+              <div class="member-info">
+                <div class="member-title">${esc(m.name || m.first_name || 'Friend')}${m.id === state.me?.id ? ' (You)' : ''}</div>
+                <div class="member-sub">${m.username ? '@' + esc(m.username) : 'Active'}</div>
+              </div>
+            </div>
+          `
+        )
+        .join('')}
+    </div>
 
     <div class="section-divider"></div>
-    <div style="font-size:12px; color:var(--muted); text-transform:uppercase;">Invite Code for "${esc(p.name)}"</div>
+    <div style="font-size:12px; color:var(--muted); text-transform:uppercase;">Invite Code</div>
     <div class="code-badge">${esc(p.code)}</div>
 
     <div class="action-stack">
@@ -816,6 +843,25 @@ function openPartySheet() {
       <button class="btn" id="createAnotherPartyBtn">Create or Join Another Party</button>
       <button class="btn danger" id="leavePartyBtn">Leave this Party</button>
     </div>
+
+    ${
+      state.parties.length > 1
+        ? `
+          <div class="section-divider"></div>
+          <div style="font-size:12px; color:var(--muted); text-transform:uppercase; margin-bottom:8px;">Switch Party</div>
+          ${state.parties
+            .map(
+              (x) => `
+                <button class="btn" style="text-align:left; margin-bottom:8px; border-color:${x.id === state.partyId ? 'var(--accent)' : 'var(--border)'};" data-pid="${x.id}">
+                  <div style="font-weight:600;">${esc(x.name)}</div>
+                  <div style="font-size:12px; color:var(--muted);">${(x.members || []).map((m) => esc(m.name || m.first_name)).join(', ')}</div>
+                </button>
+              `
+            )
+            .join('')}
+        `
+        : ''
+    }
   `);
 
   s.querySelectorAll('[data-pid]').forEach((b) => {
@@ -909,8 +955,8 @@ function openCreateOrJoinSheet() {
   };
 }
 
-// ---------- Settings Sheet ----------
-function openSettingsSheet() {
+// ---------- Profile & Settings Sheet ----------
+function openProfileSheet() {
   const currentAccent = localStorage.getItem('cinema_accent') || DEFAULT_ACCENT;
   const p = currentParty();
 
@@ -920,9 +966,30 @@ function openSettingsSheet() {
     `
   ).join('');
 
-  const s = openSheet(`
-    <h2 class="sheet-title display">Settings</h2>
+  const currentName = state.me?.custom_name || state.me?.first_name || '';
 
+  const s = openSheet(`
+    <h2 class="sheet-title display">Profile &amp; Settings</h2>
+
+    <div class="profile-avatar-wrap">
+      <div class="profile-avatar-large" id="profileAvatarLarge">
+        ${
+          state.me?.avatar_url
+            ? `<img src="${esc(state.me.avatar_url)}" alt="">`
+            : `<span>${esc((state.me?.display_name || state.me?.first_name || 'U').slice(0, 1).toUpperCase())}</span>`
+        }
+      </div>
+      <button type="button" class="btn" id="changeAvatarBtn" style="padding:8px 16px; font-size:13px;">Change Photo</button>
+      <input type="file" id="avatarFileInput" accept="image/*" hidden>
+    </div>
+
+    <label class="form-field">
+      <span class="form-label">Display Nickname</span>
+      <input type="text" id="profileNameInput" value="${esc(currentName)}" placeholder="Your nickname" maxlength="40">
+    </label>
+    <button type="button" class="btn primary" id="saveProfileBtn" style="margin-bottom:16px;">Save Nickname</button>
+
+    <div class="section-divider"></div>
     <div class="form-label" style="margin-bottom:12px;">Accent Color</div>
     <div class="swatches">${swatchesHtml}</div>
 
@@ -931,7 +998,7 @@ function openSettingsSheet() {
       <input type="color" id="customColorPicker" value="${currentAccent}">
     </div>
 
-    <button class="btn" id="resetAccentBtn" style="padding:10px 14px; font-size:13px;">Reset to Default Accent</button>
+    <button type="button" class="btn" id="resetAccentBtn" style="padding:10px 14px; font-size:13px;">Reset to Default Accent</button>
 
     ${
       p
@@ -942,7 +1009,7 @@ function openSettingsSheet() {
             <span class="form-label">Rename Party</span>
             <input type="text" id="renamePartyInput" value="${esc(p.name)}" maxlength="40">
           </label>
-          <button class="btn" id="savePartyRenameBtn" style="margin-bottom:12px;">Rename</button>
+          <button type="button" class="btn" id="savePartyRenameBtn" style="margin-bottom:12px;">Rename</button>
         `
         : ''
     }
@@ -950,11 +1017,51 @@ function openSettingsSheet() {
     <div class="section-divider"></div>
     <div class="form-label">About</div>
     <div class="about-text">
-      Cinema Party v1.0.0<br>
-      Minimalist movie tracker designed with Nothing OS aesthetics.<br><br>
-      This product uses the TMDB API but is not endorsed or certified by TMDB.
+      Cinema Party v1.1.0<br>
+      Minimalist movie tracker designed with Nothing OS editorial serif styling.<br><br>
+      Powered by open source movie catalog.
     </div>
   `);
+
+  // Avatar upload handler
+  s.querySelector('#changeAvatarBtn').onclick = () => s.querySelector('#avatarFileInput').click();
+  s.querySelector('#avatarFileInput').onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const btn = s.querySelector('#changeAvatarBtn');
+    btn.disabled = true;
+    btn.textContent = 'Uploading...';
+    try {
+      const resized = await resizeImage(file, 400);
+      const fd = new FormData();
+      fd.append('file', resized, 'avatar.webp');
+      const res = await api('/covers', { method: 'POST', body: fd });
+      await api('/me/profile', { method: 'PATCH', body: { avatar_url: res.url } });
+      state.me.avatar_url = res.url;
+      s.querySelector('#profileAvatarLarge').innerHTML = `<img src="${esc(res.url)}" alt="">`;
+      render();
+      toast('Avatar updated');
+    } catch (err) {
+      toast(err.message || 'Avatar upload failed');
+    }
+    btn.disabled = false;
+    btn.textContent = 'Change Photo';
+  };
+
+  // Profile name save
+  s.querySelector('#saveProfileBtn').onclick = async () => {
+    const newName = s.querySelector('#profileNameInput').value.trim();
+    if (!newName) return toast('Name cannot be empty');
+    try {
+      await api('/me/profile', { method: 'PATCH', body: { name: newName } });
+      state.me.custom_name = newName;
+      state.me.display_name = newName;
+      render();
+      toast('Nickname updated');
+    } catch (err) {
+      toast(err.message || 'Failed to update nickname');
+    }
+  };
 
   s.querySelectorAll('.swatch').forEach((swatchBtn) => {
     swatchBtn.onclick = () => {

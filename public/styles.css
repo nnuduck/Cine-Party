@@ -1,10 +1,3 @@
-@font-face {
-  font-family: 'Doto';
-  src: url('/fonts/doto.woff2') format('woff2');
-  font-weight: 100 900;
-  font-display: swap;
-}
-
 :root {
   --bg: #000000;
   --surface: #0F0F0F;
@@ -14,6 +7,8 @@
   --muted: #8A8A8A;
   --accent: #D71921;
   --accent-contrast: #FFFFFF;
+  --font-serif: "New York", "Charter", "Georgia", "Cambria", "Times New Roman", serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
@@ -30,7 +25,7 @@ html, body {
   color: var(--text);
   min-height: 100vh;
   overscroll-behavior-y: contain;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font-sans);
   font-size: 15px;
   line-height: 1.4;
 }
@@ -48,9 +43,9 @@ button {
 }
 
 .display {
-  font-family: 'Doto', monospace;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-family: var(--font-serif);
+  font-weight: 500;
+  letter-spacing: -0.01em;
 }
 
 .screen {
@@ -64,7 +59,7 @@ button {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 
 .party-selector {
@@ -76,7 +71,7 @@ button {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 20px;
-  padding: 10px 14px;
+  padding: 8px 14px;
   text-align: left;
   transition: border-color 0.15s ease;
 }
@@ -98,21 +93,64 @@ button {
   font-size: 12px;
 }
 
-.party-dots {
+.member-avatars {
   display: flex;
-  gap: 4px;
   align-items: center;
+  margin-left: auto;
+  padding-left: 6px;
 }
 
-.member-dot {
-  width: 7px;
-  height: 7px;
+.avatar {
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
-  background: var(--muted);
+  background: var(--surface-2);
+  border: 2px solid var(--surface);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  flex-shrink: 0;
 }
 
-.member-dot.active {
-  background: var(--accent);
+.avatar + .avatar {
+  margin-left: -8px;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.avatar-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  flex: none;
+  transition: border-color 0.15s ease;
+}
+
+.avatar-btn:active {
+  border-color: var(--muted);
+}
+
+.avatar-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .icon-btn {
@@ -145,11 +183,12 @@ button {
 /* ---------- Tabs ---------- */
 .tabs {
   display: flex;
-  gap: 8px;
+  gap: 20px;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 16px;
+  margin-bottom: 18px;
   overflow-x: auto;
   scrollbar-width: none;
+  padding: 0 4px;
 }
 
 .tabs::-webkit-scrollbar {
@@ -158,12 +197,11 @@ button {
 
 .tab {
   position: relative;
-  padding: 10px 0 12px;
+  padding: 10px 4px 14px;
   color: var(--muted);
-  font-weight: 600;
+  font-weight: 500;
   font-size: 15px;
   white-space: nowrap;
-  max-width: 40%;
   min-width: 0;
   transition: color 0.15s ease;
 }
@@ -296,7 +334,8 @@ button {
   font-size: 11px;
   font-weight: 700;
   color: var(--text);
-  font-family: 'Doto', monospace;
+  font-family: var(--font-sans);
+  letter-spacing: 0.02em;
 }
 
 .card-title {
@@ -602,7 +641,8 @@ textarea {
 .search-item-year {
   font-size: 11px;
   color: var(--muted);
-  font-family: 'Doto', monospace;
+  font-family: var(--font-sans);
+  letter-spacing: 0.02em;
 }
 
 .search-status {
@@ -628,7 +668,8 @@ textarea {
   display: grid;
   place-items: center;
   color: var(--muted);
-  font-family: 'Doto', monospace;
+  font-family: var(--font-sans);
+  letter-spacing: 0.02em;
   font-size: 13px;
   transition: all 0.15s ease;
 }
@@ -705,7 +746,8 @@ textarea {
 }
 
 .code-badge {
-  font-family: 'Doto', monospace;
+  font-family: var(--font-sans);
+  letter-spacing: 0.02em;
   font-size: 22px;
   font-weight: 700;
   text-align: center;
@@ -760,7 +802,8 @@ textarea {
 
 .detail-rating-display {
   text-align: center;
-  font-family: 'Doto', monospace;
+  font-family: var(--font-sans);
+  letter-spacing: 0.02em;
   font-size: 15px;
   color: var(--accent);
   margin-bottom: 14px;
@@ -799,4 +842,140 @@ textarea {
   color: var(--muted);
   padding: 64px 20px;
   font-size: 14px;
+}
+
+/* ---------- Autocomplete Suggestions ---------- */
+.input-wrap {
+  position: relative;
+}
+
+.suggestions-box {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  max-height: 260px;
+  overflow-y: auto;
+  z-index: 100;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.85);
+}
+
+.suggestion-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background 0.15s ease;
+}
+
+.suggestion-item:last-child {
+  border-bottom: none;
+}
+
+.suggestion-item:active {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.sug-poster {
+  width: 38px;
+  height: 52px;
+  border-radius: 6px;
+  background: #202020;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sug-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.sug-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.sug-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sug-year {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* ---------- Profile & Members Sheet ---------- */
+.profile-avatar-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.profile-avatar-large {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--surface-2);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  font-size: 32px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.profile-avatar-large img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.member-row:last-child {
+  border-bottom: none;
+}
+
+.member-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.member-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.member-sub {
+  font-size: 12px;
+  color: var(--muted);
 }

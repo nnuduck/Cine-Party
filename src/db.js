@@ -14,10 +14,29 @@ export function randomHex(bytesLen = 12) {
 
 export async function getUser(env, id) {
   return await env.DB.prepare(
-    'SELECT id, first_name, username, accent, created_at FROM users WHERE id = ?'
+    `SELECT id, first_name, username, accent, avatar_url, custom_name,
+            COALESCE(custom_name, first_name, 'You') AS display_name,
+            created_at
+     FROM users WHERE id = ?`
   )
     .bind(id)
     .first();
+}
+
+export async function updateUserProfile(env, id, { name, avatarUrl }) {
+  if (name !== undefined) {
+    const cleanName = name ? String(name).trim().slice(0, 40) : null;
+    await env.DB.prepare('UPDATE users SET custom_name = ? WHERE id = ?')
+      .bind(cleanName, id)
+      .run();
+  }
+  if (avatarUrl !== undefined) {
+    const cleanAvatar = avatarUrl ? String(avatarUrl).trim() : null;
+    await env.DB.prepare('UPDATE users SET avatar_url = ? WHERE id = ?')
+      .bind(cleanAvatar, id)
+      .run();
+  }
+  return await getUser(env, id);
 }
 
 export async function setAccent(env, id, accent) {
@@ -127,7 +146,8 @@ export async function partiesForUser(env, userId) {
   if (parties.length === 0) return [];
 
   const membersRes = await env.DB.prepare(
-    `SELECT m.party_id, u.id, u.first_name, u.username
+    `SELECT m.party_id, u.id, u.first_name, u.username, u.avatar_url, u.custom_name,
+            COALESCE(u.custom_name, u.first_name, 'Friend') AS name
      FROM members m
      JOIN users u ON u.id = m.user_id
      WHERE m.party_id IN (${parties.map(() => '?').join(',')})
@@ -145,6 +165,8 @@ export async function partiesForUser(env, userId) {
       id: row.id,
       first_name: row.first_name,
       username: row.username,
+      name: row.name,
+      avatar_url: row.avatar_url,
     });
   }
 
@@ -156,7 +178,9 @@ export async function partiesForUser(env, userId) {
 
 export async function getMovies(env, partyId) {
   const res = await env.DB.prepare(
-    `SELECT m.*, u.first_name AS added_by_name
+    `SELECT m.*,
+            COALESCE(u.custom_name, u.first_name, 'Friend') AS added_by_name,
+            u.avatar_url AS added_by_avatar
      FROM movies m
      JOIN users u ON u.id = m.added_by
      WHERE m.party_id = ?
@@ -169,7 +193,9 @@ export async function getMovies(env, partyId) {
 
 export async function getMovie(env, movieId) {
   return await env.DB.prepare(
-    `SELECT m.*, u.first_name AS added_by_name
+    `SELECT m.*,
+            COALESCE(u.custom_name, u.first_name, 'Friend') AS added_by_name,
+            u.avatar_url AS added_by_avatar
      FROM movies m
      JOIN users u ON u.id = m.added_by
      WHERE m.id = ?`

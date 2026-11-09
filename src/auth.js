@@ -87,6 +87,7 @@ export async function verifyInitData(initData, botToken, maxAgeSec = 86400) {
       id: Number(u.id),
       first_name: String(u.first_name || ''),
       username: u.username ? String(u.username) : null,
+      photo_url: u.photo_url ? String(u.photo_url) : null,
     };
   } catch {
     return null;
@@ -119,11 +120,13 @@ export async function authenticate(request, env) {
 
   // Upsert user in D1
   await env.DB.prepare(
-    `INSERT INTO users (id, first_name, username) VALUES (?1, ?2, ?3)
-     ON CONFLICT(id) DO UPDATE SET first_name = excluded.first_name, username = excluded.username
-     WHERE users.first_name != excluded.first_name OR COALESCE(users.username, '') != COALESCE(excluded.username, '')`
+    `INSERT INTO users (id, first_name, username, avatar_url) VALUES (?1, ?2, ?3, ?4)
+     ON CONFLICT(id) DO UPDATE SET
+       first_name = CASE WHEN users.custom_name IS NULL THEN excluded.first_name ELSE users.first_name END,
+       username = excluded.username,
+       avatar_url = COALESCE(users.avatar_url, excluded.avatar_url)`
   )
-    .bind(user.id, user.first_name, user.username)
+    .bind(user.id, user.first_name, user.username, user.photo_url || null)
     .run();
 
   return user;

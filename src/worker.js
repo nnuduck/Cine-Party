@@ -1,7 +1,7 @@
 // Main Cloudflare Worker entrypoint and API router.
 import { authenticate, HttpError } from './auth.js';
 import * as db from './db.js';
-import { searchMovies } from './tmdb.js';
+import { searchMovies } from './movieSearch.js';
 import { handleTelegramWebhook } from './telegram.js';
 
 function json(data, status = 200, headers = {}) {
@@ -19,6 +19,8 @@ function posterOk(p) {
   if (typeof p !== 'string') return false;
   return (
     p.startsWith('https://image.tmdb.org/t/p/') ||
+    p.startsWith('https://m.media-amazon.com/images/') ||
+    p.startsWith('https://images.metahub.space/') ||
     /^\/api\/covers\/[a-f0-9]+$/.test(p)
   );
 }
@@ -68,12 +70,16 @@ export default {
     if (path.startsWith('/api/covers/') && method === 'GET') {
       const coverId = path.slice('/api/covers/'.length);
       const row = await db.getCover(env, coverId);
-      if (!row) {
+      if (!row || !row.data) {
         return new Response('Not Found', { status: 404 });
       }
-      return new Response(row.data, {
+      const rawBytes = Array.isArray(row.data)
+        ? new Uint8Array(row.data)
+        : (row.data instanceof ArrayBuffer ? new Uint8Array(row.data) : row.data);
+
+      return new Response(rawBytes, {
         headers: {
-          'Content-Type': row.mime,
+          'Content-Type': row.mime || 'image/webp',
           'Cache-Control': 'public, max-age=31536000, immutable',
         },
       });
@@ -98,12 +104,12 @@ export default {
 };
 
 async function handleApi(request, env, url, path, method) {
-  // TMDB search route (auth required)
-  if (path === '/api/tmdb/search' && method === 'GET') {
+  // Movie search route (open catalog + optional TMDB, auth required)
+  if ((path === '/api/movies/search' || path === '/api/tmdb/search') && method === 'GET') {
     await authenticate(request, env);
     const q = url.searchParams.get('q') || '';
-    const res = await searchMovies(q, env.TMDB_API_KEY);
-    return json(res);
+    const results = await searchMovies(q, env);
+    return json({ results });
   }
 
   // Cover image upload
@@ -163,11 +169,24 @@ async function handleApi(request, env, url, path, method) {
         id: fullUser.id,
         first_name: fullUser.first_name,
         username: fullUser.username,
+        custom_name: fullUser.custom_name || null,
+        display_name: fullUser.display_name || fullUser.custom_name || fullUser.first_name || 'You',
+        avatar_url: fullUser.avatar_url || null,
         accent: fullUser.accent || null,
       },
       parties,
       invite_base: inviteBase,
     });
+  }
+
+  // PATCH /api/me/profile
+  if (path === '/api/me/profile' && method === 'PATCH') {
+    const body = await request.json().catch(() => ({}));
+    const updated = await db.updateUserProfile(env, user.id, {
+      name: body.name,
+      avatarUrl: body.avatar_url,
+    });
+    return json({ user: updated });
   }
 
   // PATCH /api/me/accent
