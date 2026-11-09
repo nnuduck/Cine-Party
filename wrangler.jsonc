@@ -20,7 +20,7 @@
 		}
 	],
 	"vars": {
-		"BOT_USERNAME": "",
-		"APP_SHORT_NAME": ""
+		"BOT_USERNAME": "cine_party_bot",
+		"APP_SHORT_NAME": "cinema"
 	}
 }
