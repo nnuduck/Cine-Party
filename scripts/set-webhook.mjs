@@ -9,15 +9,15 @@ async function run() {
   console.log('--- Telegram Webhook & Menu Button Setup ---');
 
   const workerUrl = (
-    process.env.WORKER_URL || (await rl.question('Enter deployed Worker URL (e.g. https://cinema-party.your-subdomain.workers.dev): '))
+    process.argv[2] || process.env.WORKER_URL || (await rl.question('Enter deployed Worker URL (e.g. https://cinema-party.your-subdomain.workers.dev): '))
   ).trim().replace(/\/+$/, '');
 
   const botToken = (
-    process.env.BOT_TOKEN || (await rl.question('Enter Telegram BOT_TOKEN from @BotFather: '))
+    process.argv[3] || process.env.BOT_TOKEN || (await rl.question('Enter Telegram BOT_TOKEN from @BotFather: '))
   ).trim();
 
   const webhookSecret = (
-    process.env.WEBHOOK_SECRET || (await rl.question('Enter WEBHOOK_SECRET (configured on Worker): '))
+    process.argv[4] || process.env.WEBHOOK_SECRET || (await rl.question('Enter WEBHOOK_SECRET (configured on Worker): '))
   ).trim();
 
   rl.close();
