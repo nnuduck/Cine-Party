@@ -57,105 +57,196 @@ button {
   margin: 0 auto;
 }
 
-/* ---------- Top Bar ---------- */
+/* ---------- Top Bar (Minimalist Telegram/iOS Pill Style) ---------- */
 .topbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 18px;
-}
-
-.party-selector {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
+  justify-content: space-between;
   gap: 10px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  padding: 8px 14px;
-  text-align: left;
-  transition: border-color 0.18s ease, transform 0.14s var(--ease-spring);
+  margin-bottom: 16px;
+  position: relative;
 }
 
-.party-selector:active {
-  border-color: var(--muted);
-  transform: scale(0.985);
-}
-
-.party-name {
-  font-weight: 600;
-  font-size: 15px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.party-meta {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.member-avatars {
+.topbar-left {
   display: flex;
   align-items: center;
-  margin-left: auto;
-  padding-left: 6px;
+  min-width: 0;
 }
 
-.avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--surface-2);
-  border: 2px solid var(--surface);
-  display: grid;
-  place-items: center;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text);
-  overflow: hidden;
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-shrink: 0;
 }
 
-.avatar + .avatar {
-  margin-left: -8px;
-}
-
-.avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
-.avatar-btn {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
+/* Pill Buttons */
+.pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  border-radius: 18px;
   background: var(--surface);
-  overflow: hidden;
-  display: grid;
-  place-items: center;
-  font-size: 15px;
-  font-weight: 600;
+  border: 1px solid var(--border);
   color: var(--text);
-  flex: none;
-  transition: border-color 0.18s ease, transform 0.14s var(--ease-spring);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: transform 0.12s var(--ease-spring), border-color 0.16s ease, background-color 0.16s ease;
 }
 
-.avatar-btn:active {
+.pill-btn:active {
+  transform: scale(0.95);
   border-color: var(--muted);
-  transform: scale(0.94);
+  background: var(--surface-2);
 }
 
-.avatar-btn img {
+.pill-btn.party-pill {
+  padding: 0 12px 0 10px;
+  max-width: 220px;
+}
+
+.party-pill-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.party-pill-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+
+.party-pill-chevron {
+  width: 14px;
+  height: 14px;
+  stroke: var(--muted);
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
+.pill-btn.icon-pill {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.pill-btn.icon-pill:active {
+  transform: scale(0.92);
+}
+
+.icon-pill svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icon-pill.menu-pill svg {
+  width: 20px;
+  height: 20px;
+}
+
+.icon-pill img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.avatar-initials {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+/* ---------- Dropdown Popover Menu (Modern Native Style) ---------- */
+.popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  animation: fadeIn 0.12s ease;
+}
+
+.popover-menu {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  z-index: 51;
+  width: 220px;
+  background: #181818;
+  border: 1px solid #2C2C2E;
+  border-radius: 18px;
+  padding: 6px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.75), 0 2px 8px rgba(0, 0, 0, 0.5);
+  animation: popoverScaleIn 0.18s var(--ease-spring);
+  transform-origin: top right;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+@keyframes popoverScaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.88) translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.popover-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: left;
+  transition: background-color 0.12s ease, transform 0.1s var(--ease-spring);
+}
+
+.popover-item:active {
+  background: rgba(255, 255, 255, 0.08);
+  transform: scale(0.98);
+}
+
+.popover-item svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.popover-divider {
+  height: 1px;
+  background: #282828;
+  margin: 5px 6px;
 }
 
 .icon-btn {

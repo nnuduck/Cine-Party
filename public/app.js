@@ -408,6 +408,97 @@ function switchStatus(newStatus) {
   refreshMoviesContainer();
 }
 
+function toggleTopMenu() {
+  haptic('light');
+  const existing = document.getElementById('topMenuPopover');
+  if (existing) {
+    existing.remove();
+    document.getElementById('topMenuBackdrop')?.remove();
+    return;
+  }
+
+  const topbar = $app.querySelector('.topbar');
+  if (!topbar) return;
+
+  const backdrop = document.createElement('div');
+  backdrop.id = 'topMenuBackdrop';
+  backdrop.className = 'popover-backdrop';
+
+  const menu = document.createElement('div');
+  menu.id = 'topMenuPopover';
+  menu.className = 'popover-menu';
+  menu.innerHTML = `
+    <button type="button" class="popover-item" id="menuAddHomeBtn">
+      <svg viewBox="0 0 24 24">
+        <rect x="5" y="2" width="14" height="20" rx="3" ry="3"></rect>
+        <line x1="12" y1="18" x2="12.01" y2="18"></line>
+      </svg>
+      <span>Add to Home Screen</span>
+    </button>
+
+    <div class="popover-divider"></div>
+
+    <button type="button" class="popover-item" id="menuPartyBtn">
+      <svg viewBox="0 0 24 24">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+        <circle cx="9" cy="7" r="4"></circle>
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+      </svg>
+      <span>Party &amp; Invite</span>
+    </button>
+
+    <button type="button" class="popover-item" id="menuProfileBtn">
+      <svg viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+      <span>Settings &amp; Accent</span>
+    </button>
+
+    <div class="popover-divider"></div>
+
+    <button type="button" class="popover-item" id="menuReloadBtn">
+      <svg viewBox="0 0 24 24">
+        <polyline points="23 4 23 10 17 10"></polyline>
+        <polyline points="1 20 1 14 7 14"></polyline>
+        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+      </svg>
+      <span>Reload Page</span>
+    </button>
+  `;
+
+  function closeMenu() {
+    menu.remove();
+    backdrop.remove();
+  }
+
+  backdrop.onclick = closeMenu;
+
+  menu.querySelector('#menuAddHomeBtn').onclick = () => {
+    closeMenu();
+    requestAddToHomeScreen();
+  };
+
+  menu.querySelector('#menuPartyBtn').onclick = () => {
+    closeMenu();
+    openPartySheet();
+  };
+
+  menu.querySelector('#menuProfileBtn').onclick = () => {
+    closeMenu();
+    openProfileSheet();
+  };
+
+  menu.querySelector('#menuReloadBtn').onclick = () => {
+    closeMenu();
+    location.reload();
+  };
+
+  document.body.appendChild(backdrop);
+  topbar.appendChild(menu);
+}
+
 function render() {
   if (state.loading) {
     $app.innerHTML = '<div class="spinner">Loading...</div>';
@@ -421,36 +512,45 @@ function render() {
 
   const p = currentParty();
   const list = visibleMovies();
-  const membersCount = (p.members || []).length;
-  const avatarsHtml = (p.members || [])
-    .slice(0, 3)
-    .map((m) => {
-      if (m.avatar_url) {
-        return `<div class="avatar"><img src="${esc(m.avatar_url)}" alt=""></div>`;
-      }
-      return `<div class="avatar"><span>${esc((m.name || m.first_name || 'F').slice(0, 1).toUpperCase())}</span></div>`;
-    })
-    .join('');
 
   const userAvatarHtml = state.me?.avatar_url
     ? `<img src="${esc(state.me.avatar_url)}" alt="">`
-    : `<span>${esc((state.me?.display_name || state.me?.first_name || 'U').slice(0, 1).toUpperCase())}</span>`;
+    : `<span class="avatar-initials">${esc((state.me?.display_name || state.me?.first_name || 'U').slice(0, 1).toUpperCase())}</span>`;
 
   const otherTabLabel = otherMemberName();
 
   $app.innerHTML = `
     <div class="screen">
       <header class="topbar">
-        <button class="party-selector" id="partySelectBtn">
-          <div style="min-width:0; flex:1;">
-            <div class="party-name">${esc(p.name)}</div>
-            <div class="party-meta">${membersCount} member${membersCount === 1 ? '' : 's'}</div>
-          </div>
-          <div class="member-avatars">${avatarsHtml}</div>
-        </button>
-        <button class="avatar-btn" id="profileBtn" aria-label="Profile">
-          ${userAvatarHtml}
-        </button>
+        <div class="topbar-left">
+          <button class="pill-btn party-pill" id="partySelectBtn" aria-label="Select Party">
+            <span class="party-pill-icon">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                <circle cx="9" cy="7" r="4"></circle>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+              </svg>
+            </span>
+            <span class="party-pill-name">${esc(p.name)}</span>
+            <svg class="party-pill-chevron" viewBox="0 0 24 24">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+        </div>
+
+        <div class="topbar-right">
+          <button class="pill-btn icon-pill" id="profileBtn" aria-label="Profile">
+            ${userAvatarHtml}
+          </button>
+          <button class="pill-btn icon-pill menu-pill" id="menuBtn" aria-label="Menu">
+            <svg viewBox="0 0 24 24">
+              <circle cx="12" cy="5" r="1.75" fill="currentColor"></circle>
+              <circle cx="12" cy="12" r="1.75" fill="currentColor"></circle>
+              <circle cx="12" cy="19" r="1.75" fill="currentColor"></circle>
+            </svg>
+          </button>
+        </div>
       </header>
 
       <nav class="tabs">
@@ -499,6 +599,7 @@ function render() {
 
   $app.querySelector('#partySelectBtn').onclick = openPartySheet;
   $app.querySelector('#profileBtn').onclick = openProfileSheet;
+  $app.querySelector('#menuBtn').onclick = toggleTopMenu;
   $app.querySelector('#fabBtn')?.addEventListener('click', () => {
     haptic('medium');
     openMovieEditor();
@@ -1164,19 +1265,6 @@ function openProfileSheet() {
     }
 
     <div class="section-divider"></div>
-    <div class="form-label" style="margin-bottom:12px;">App &amp; Shortcuts</div>
-    <button type="button" class="btn" id="addToHomeBtn" style="gap:10px;">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="5" y="2" width="14" height="20" rx="3" ry="3"></rect>
-        <line x1="12" y1="18" x2="12.01" y2="18"></line>
-      </svg>
-      <span>Add to Home Screen</span>
-    </button>
-    <div style="color:var(--muted); font-size:12px; margin-top:8px; line-height:1.4;">
-      Pin Cinema Party to your phone's home screen for instant full-screen access.
-    </div>
-
-    <div class="section-divider"></div>
     <div class="form-label">About</div>
     <div class="about-text">
       Cinema Party v1.2.0<br>
@@ -1248,24 +1336,6 @@ function openProfileSheet() {
     haptic('medium');
     toast('Accent reset to default');
   };
-
-  const addHomeBtn = s.querySelector('#addToHomeBtn');
-  if (addHomeBtn) {
-    if (homeScreenStatus === 'added') {
-      addHomeBtn.innerHTML = `
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="20 6 9 17 4 12"></polyline>
-        </svg>
-        <span>Added to Home Screen</span>
-      `;
-      addHomeBtn.disabled = true;
-      addHomeBtn.style.opacity = '0.65';
-    } else {
-      addHomeBtn.onclick = () => {
-        requestAddToHomeScreen();
-      };
-    }
-  }
 
   if (p) {
     s.querySelector('#savePartyRenameBtn').onclick = async () => {

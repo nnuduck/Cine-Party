@@ -54,16 +54,29 @@ export async function handleTelegramWebhook(request, env) {
     const appUrl = new URL(request.url).origin;
     const targetUrl = code ? `${appUrl}?code=${encodeURIComponent(code)}` : appUrl;
 
-    const replyMarkup = {
-      inline_keyboard: [
-        [
-          {
-            text: '🎬 Open Cinema',
-            web_app: { url: targetUrl },
-          },
-        ],
-      ],
-    };
+    const botUser = env.BOT_USERNAME;
+    const appShort = env.APP_SHORT_NAME;
+    const miniAppUrl = botUser && appShort
+      ? `https://t.me/${botUser}/${appShort}${code ? `?startapp=${encodeURIComponent(code)}` : ''}`
+      : null;
+
+    const keyboard = [];
+    if (miniAppUrl) {
+      keyboard.push([
+        {
+          text: '🎬 Open Mini App',
+          url: miniAppUrl,
+        },
+      ]);
+    }
+    keyboard.push([
+      {
+        text: miniAppUrl ? 'Open in Chat' : '🎬 Open Cinema',
+        web_app: { url: targetUrl },
+      },
+    ]);
+
+    const replyMarkup = { inline_keyboard: keyboard };
 
     if (env.BOT_TOKEN) {
       await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendMessage`, {
