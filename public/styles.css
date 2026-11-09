@@ -556,53 +556,80 @@ button {
   stroke-linejoin: round;
 }
 
-/* ---------- Bottom Sheet ---------- */
+/* ---------- Floating Island Sheet (Detached iOS Modal Card) ---------- */
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.72);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  z-index: 40;
+  background: rgba(0, 0, 0, 0.74);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  z-index: 100;
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  animation: fadeIn 0.22s var(--ease-smooth);
+  padding: 16px 14px calc(var(--safe-bottom) + 14px);
+  animation: overlayFadeIn 0.22s var(--ease-smooth);
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+@media (min-width: 600px) {
+  .overlay {
+    align-items: center;
+    padding: 24px;
+  }
 }
 
 .sheet {
-  background: var(--surface);
+  background: #141416;
   width: 100%;
-  max-width: 640px;
-  max-height: 90vh;
+  max-width: 500px;
+  max-height: calc(100vh - var(--safe-top) - var(--safe-bottom) - 36px);
   overflow-y: auto;
-  border-radius: 24px 24px 0 0;
-  padding: 12px 20px calc(var(--safe-bottom) + 24px);
-  border-top: 1px solid var(--border);
-  animation: slideUp 0.32s var(--ease-sheet);
-  will-change: transform;
+  overscroll-behavior: contain;
+  border-radius: 28px;
+  padding: 14px 20px 22px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.9), 0 4px 16px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  animation: cardSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, opacity;
+  box-sizing: border-box;
+  margin: auto 0 0;
+}
+
+@media (min-width: 600px) {
+  .sheet {
+    margin: auto;
+  }
 }
 
 .drag-handle {
   width: 36px;
   height: 4px;
-  border-radius: 2px;
-  background: var(--border);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.2);
   margin: 0 auto 16px;
 }
 
 .sheet-title {
-  font-size: 18px;
+  font-size: 19px;
   font-weight: 700;
+  letter-spacing: -0.01em;
   margin-bottom: 18px;
 }
 
-@keyframes slideUp {
-  from { transform: translateY(100%); }
-  to { transform: translateY(0); }
+@keyframes cardSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(28px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
-@keyframes fadeIn {
+@keyframes overlayFadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
 }
@@ -656,41 +683,56 @@ textarea {
   flex: 1;
 }
 
-/* ---------- Buttons ---------- */
+/* ---------- Intrinsic Content-Sized Pill Buttons (iOS-style) ---------- */
 .btn {
-  padding: 14px 18px;
-  border-radius: 14px;
-  font-size: 14px;
-  font-weight: 600;
-  text-align: center;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
+  gap: 8px;
+  width: auto;
+  max-width: max-content;
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 9999px;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text);
-  transition: opacity 0.15s ease, transform 0.12s var(--ease-spring), background-color 0.18s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  transition: transform 0.12s var(--ease-spring), background-color 0.16s ease, border-color 0.16s ease, opacity 0.14s ease;
+  user-select: none;
+  cursor: pointer;
 }
 
 .btn:active {
-  transform: scale(0.97);
+  transform: scale(0.95);
+  background: #222225;
 }
 
 .btn.primary {
   background: var(--accent);
   color: var(--accent-contrast);
   border-color: transparent;
+  box-shadow: 0 3px 14px rgba(215, 25, 33, 0.35);
 }
 
 .btn.primary:active {
-  opacity: 0.88;
+  opacity: 0.9;
+  transform: scale(0.95);
 }
 
 .btn.danger {
-  color: var(--accent);
-  background: rgba(215, 25, 33, 0.08);
-  border-color: rgba(215, 25, 33, 0.2);
+  color: #ff5c5c;
+  background: rgba(255, 69, 58, 0.1);
+  border-color: rgba(255, 69, 58, 0.24);
+}
+
+.btn.danger:active {
+  background: rgba(255, 69, 58, 0.18);
+  transform: scale(0.95);
 }
 
 .btn:disabled {
@@ -698,10 +740,55 @@ textarea {
   pointer-events: none;
 }
 
+.btn-icon-svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
 .action-stack {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
-  margin-top: 18px;
+  align-items: center;
+  margin-top: 20px;
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+/* Party card item (for switching parties in sheet) */
+.party-card-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  border-radius: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  text-align: left;
+  transition: transform 0.12s var(--ease-spring), border-color 0.16s ease;
+}
+
+.party-card-item:active {
+  transform: scale(0.98);
+}
+
+.party-card-item.active {
+  border-color: var(--accent);
 }
 
 /* ---------- Cover Picker ---------- */
@@ -709,6 +796,7 @@ textarea {
   display: flex;
   gap: 14px;
   margin-bottom: 16px;
+  align-items: center;
 }
 
 .cover-preview {
@@ -735,9 +823,9 @@ textarea {
 .cover-actions {
   flex: 1;
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: 8px;
-  justify-content: center;
+  align-items: center;
 }
 
 /* ---------- TMDB Search Panel ---------- */
@@ -1109,6 +1197,28 @@ textarea {
   border-bottom: none;
 }
 
+.member-row .avatar {
+  width: 44px !important;
+  height: 44px !important;
+  min-width: 44px !important;
+  min-height: 44px !important;
+  max-width: 44px !important;
+  max-height: 44px !important;
+  border-radius: 50% !important;
+  overflow: hidden !important;
+  flex-shrink: 0 !important;
+}
+
+.member-row .avatar img {
+  width: 44px !important;
+  height: 44px !important;
+  max-width: 44px !important;
+  max-height: 44px !important;
+  object-fit: cover !important;
+  display: block !important;
+  border-radius: 50% !important;
+}
+
 .member-info {
   flex: 1;
   min-width: 0;
@@ -1118,9 +1228,15 @@ textarea {
   font-weight: 600;
   font-size: 14px;
   color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .member-sub {
   font-size: 12px;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

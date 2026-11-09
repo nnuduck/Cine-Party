@@ -546,7 +546,9 @@ function renderWelcome() {
           <span class="form-label">Create a new party</span>
           <input type="text" id="newPartyName" placeholder="e.g. Movie Nights" maxlength="40">
         </label>
-        <button class="btn primary" id="createPartyBtn">Create Party</button>
+        <div>
+          <button class="btn primary" id="createPartyBtn">Create Party</button>
+        </div>
 
         <div style="text-align:center; color:var(--muted); font-size:12px; margin:8px 0;">OR</div>
 
@@ -554,7 +556,9 @@ function renderWelcome() {
           <span class="form-label">Join by invite code</span>
           <input type="text" id="joinPartyCode" placeholder="6-CHAR CODE" autocapitalize="characters" maxlength="6">
         </label>
-        <button class="btn" id="joinPartyBtn">Join Party</button>
+        <div>
+          <button class="btn" id="joinPartyBtn">Join Party</button>
+        </div>
       </div>
     </div>
   `;
@@ -618,12 +622,20 @@ function openMovieDetail(movieId) {
     ${
       canEdit
         ? `
-          <div class="action-stack">
+          <div class="action-stack" style="justify-content:center;">
             <button class="btn primary" id="toggleWatchBtn">
-              ${m.status === 'want' ? 'Mark as Watched' : 'Move to Want to Watch'}
+              ${
+                m.status === 'want'
+                  ? `<svg class="btn-icon-svg" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Mark as Watched`
+                  : `<svg class="btn-icon-svg" viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg> Move to Want to Watch`
+              }
             </button>
-            <button class="btn" id="editMovieBtn">Edit Movie</button>
-            <button class="btn danger" id="deleteMovieBtn">Delete Movie</button>
+            <button class="btn" id="editMovieBtn">
+              <svg class="btn-icon-svg" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit Movie
+            </button>
+            <button class="btn danger" id="deleteMovieBtn">
+              <svg class="btn-icon-svg" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Delete Movie
+            </button>
           </div>
         `
         : `<div style="text-align:center; color:var(--muted); font-size:12px; margin-top:14px;">Personal item (view only)</div>`
@@ -759,11 +771,15 @@ function openMovieEditor(movie) {
     </label>
 
     <div class="action-stack">
-      <button class="btn primary" id="saveMovieBtn">Save</button>
+      <button class="btn primary" id="saveMovieBtn">
+        <svg class="btn-icon-svg" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Save
+      </button>
+      <button type="button" class="btn" id="cancelMovieBtn">Cancel</button>
     </div>
   `);
 
   const $ = (sel) => s.querySelector(sel);
+  $('#cancelMovieBtn').onclick = closeSheet;
   $('#movieTitle').value = draft.title;
   $('#movieYear').value = draft.year;
   $('#movieNote').value = draft.note;
@@ -996,9 +1012,15 @@ function openPartySheet() {
     <div class="code-badge">${esc(p.code)}</div>
 
     <div class="action-stack">
-      <button class="btn primary" id="shareInviteBtn">Share Invite Link</button>
-      <button class="btn" id="createAnotherPartyBtn">Create or Join Another Party</button>
-      <button class="btn danger" id="leavePartyBtn">Leave this Party</button>
+      <button class="btn primary" id="shareInviteBtn">
+        <svg class="btn-icon-svg" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> Share Invite Link
+      </button>
+      <button class="btn" id="createAnotherPartyBtn">
+        <svg class="btn-icon-svg" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Other Parties
+      </button>
+      <button class="btn danger" id="leavePartyBtn">
+        <svg class="btn-icon-svg" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> Leave Party
+      </button>
     </div>
 
     ${
@@ -1009,7 +1031,7 @@ function openPartySheet() {
           ${state.parties
             .map(
               (x) => `
-                <button class="btn" style="text-align:left; margin-bottom:8px; border-color:${x.id === state.partyId ? 'var(--accent)' : 'var(--border)'};" data-pid="${x.id}">
+                <button type="button" class="party-card-item ${x.id === state.partyId ? 'active' : ''}" data-pid="${x.id}">
                   <div style="font-weight:600;">${esc(x.name)}</div>
                   <div style="font-size:12px; color:var(--muted);">${(x.members || []).map((m) => esc(m.name || m.first_name)).join(', ')}</div>
                 </button>
@@ -1070,15 +1092,19 @@ function openCreateOrJoinSheet() {
       <span class="form-label">Party Name</span>
       <input type="text" id="anotherPartyName" placeholder="e.g. Cinema Club" maxlength="40">
     </label>
-    <button class="btn primary" id="doCreateAnotherBtn">Create</button>
+    <div>
+      <button class="btn primary" id="doCreateAnotherBtn">Create</button>
+    </div>
 
-    <div style="text-align:center; color:var(--muted); font-size:12px; margin:12px 0;">OR</div>
+    <div style="text-align:center; color:var(--muted); font-size:12px; margin:16px 0;">OR</div>
 
     <label class="form-field">
       <span class="form-label">Invite Code</span>
       <input type="text" id="anotherJoinCode" placeholder="6-CHAR CODE" autocapitalize="characters" maxlength="6">
     </label>
-    <button class="btn" id="doJoinAnotherBtn">Join</button>
+    <div>
+      <button class="btn" id="doJoinAnotherBtn">Join</button>
+    </div>
   `);
 
   s.querySelector('#doCreateAnotherBtn').onclick = async () => {
@@ -1144,7 +1170,11 @@ function openProfileSheet() {
       <span class="form-label">Display Nickname</span>
       <input type="text" id="profileNameInput" value="${esc(currentName)}" placeholder="Your nickname" maxlength="40">
     </label>
-    <button type="button" class="btn primary" id="saveProfileBtn" style="margin-bottom:16px;">Save Nickname</button>
+    <div style="margin-bottom:16px;">
+      <button type="button" class="btn primary" id="saveProfileBtn">
+        <svg class="btn-icon-svg" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Save Nickname
+      </button>
+    </div>
 
     <div class="section-divider"></div>
     <div class="form-label" style="margin-bottom:12px;">Accent Color</div>
@@ -1155,7 +1185,9 @@ function openProfileSheet() {
       <input type="color" id="customColorPicker" value="${currentAccent}">
     </div>
 
-    <button type="button" class="btn" id="resetAccentBtn" style="padding:10px 14px; font-size:13px;">Reset to Default Accent</button>
+    <div>
+      <button type="button" class="btn" id="resetAccentBtn">Reset Accent</button>
+    </div>
 
     ${
       p
@@ -1166,7 +1198,9 @@ function openProfileSheet() {
             <span class="form-label">Rename Party</span>
             <input type="text" id="renamePartyInput" value="${esc(p.name)}" maxlength="40">
           </label>
-          <button type="button" class="btn" id="savePartyRenameBtn" style="margin-bottom:12px;">Rename</button>
+          <div style="margin-bottom:12px;">
+            <button type="button" class="btn primary" id="savePartyRenameBtn">Rename</button>
+          </div>
         `
         : ''
     }
