@@ -1,6 +1,6 @@
 # Cinema Party
 
-A minimalist Telegram Mini App and bot for tracking movies together with friends, designed with Nothing OS aesthetics (monochrome palette, OLED pitch black, soft geometry, dot-matrix headings, customizable accent color).
+A minimalist Telegram Mini App and bot for tracking movies together with friends, featuring an OLED dark mode, editorial serif headings, live movie search suggestions, and customizable accent colors.
 
 ---
 
@@ -10,6 +10,7 @@ A minimalist Telegram Mini App and bot for tracking movies together with friends
 - **Database**: Cloudflare D1 (serverless SQLite at the edge).
 - **Frontend**: Static Web Assets hosted directly via Workers Static Assets (`public/`). Pure ES modules, zero frontend build step.
 - **Bot**: Telegram Webhook integrated into the Worker at `/telegram`.
+- **Movie Catalog**: Open source movie search powered by Cinemeta (IMDb metadata, zero API keys required). Optional TMDB fallback.
 - **Security**:
   - Full HMAC-SHA256 signature verification for Telegram `initData`.
   - Scoped data access: personal lists are read-only to others; shared movies editable by party members.
@@ -25,19 +26,18 @@ cinema-party/
   public/
     index.html            # Main HTML document
     app.js                # Frontend client logic & state
-    styles.css            # Nothing OS styling & CSS variables
+    styles.css            # Dark theme styling & CSS variables
     manifest.webmanifest  # PWA web manifest
     icon.svg              # App icon
-    fonts/
-      doto.woff2          # Self-hosted Doto dot-matrix font
   src/
     worker.js             # Worker entrypoint, API router, asset handler
     auth.js               # Telegram initData signature validation & auth middleware
     db.js                 # D1 database queries & transactions
     telegram.js           # Telegram bot webhook handler
-    tmdb.js               # TMDB search integration
+    movieSearch.js        # Open catalog movie search & suggestions
   migrations/
     0001_init.sql         # Initial D1 database schema
+    0002_user_profile.sql # User avatars & display names
   scripts/
     setup.mjs             # Interactive setup helper
     set-webhook.mjs       # Webhook and chat menu button configurator
@@ -104,12 +104,11 @@ npm run db:remote
 Set the following secrets in Cloudflare (you will be prompted to type them securely):
 ```bash
 npx wrangler secret put BOT_TOKEN
-npx wrangler secret put TMDB_API_KEY
 npx wrangler secret put WEBHOOK_SECRET
 ```
 - `BOT_TOKEN`: Your Telegram bot token from @BotFather.
-- `TMDB_API_KEY`: Free API key from https://www.themoviedb.org/settings/api (optional, for movie cover search).
 - `WEBHOOK_SECRET`: A random secret string of your choice (e.g. 32 alphanumeric characters) to authenticate incoming Telegram updates.
+- Optional: `npx wrangler secret put TMDB_API_KEY` (if you want to also query TMDB in addition to the open movie catalog).
 
 ### Step 5: Deploy the Worker
 ```bash
@@ -121,9 +120,9 @@ Wrangler will output your production HTTPS URL, for example:
 ### Step 6: Configure Telegram Webhook and Menu Button
 Run the helper script:
 ```bash
-npm run webhook
+node scripts/set-webhook.mjs <WORKER_URL> <BOT_TOKEN> <WEBHOOK_SECRET>
 ```
-Follow the prompts to enter your Worker URL, `BOT_TOKEN`, and `WEBHOOK_SECRET`. This sets the webhook to `<worker-url>/telegram` and adds the permanent "Movies" button in the bot chat.
+This sets the webhook to `<worker-url>/telegram` and adds the permanent "Movies" button in the bot chat.
 
 ### Step 7: Configure @BotFather (Optional Direct Mini App Link)
 1. Open [@BotFather](https://t.me/BotFather) in Telegram.

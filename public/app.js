@@ -1,4 +1,4 @@
-// Cinema Party - Client Application (Mobile-first, Nothing OS style)
+// Cinema Party - Client Application (Mobile-first, dark theme)
 
 const tg = window.Telegram?.WebApp;
 if (tg) {
@@ -46,7 +46,7 @@ function toast(msg) {
 // ---------- Accent Customization ----------
 const DEFAULT_ACCENT = '#D71921';
 const PRESET_SWATCHES = [
-  '#D71921', // Nothing Red
+  '#D71921', // Crimson Red
   '#FFFFFF', // White
   '#3B82F6', // Blue
   '#10B981', // Green
@@ -252,7 +252,7 @@ function emptyMessage() {
   if (state.status === 'watched') {
     return state.tab === 'together'
       ? 'No watched movies together yet.'
-      : 'Nothing marked as watched in this list.';
+      : 'No movies marked as watched in this list.';
   }
   if (state.tab === 'together') return 'Add movies to watch together with friends.';
   if (state.tab === 'mine') return 'Your personal watchlist.';
@@ -1018,7 +1018,7 @@ function openProfileSheet() {
     <div class="form-label">About</div>
     <div class="about-text">
       Cinema Party v1.1.0<br>
-      Minimalist movie tracker designed with Nothing OS editorial serif styling.<br><br>
+      Minimalist movie tracker with editorial serif typography.<br><br>
       Powered by open source movie catalog.
     </div>
   `);
