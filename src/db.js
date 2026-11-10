@@ -206,8 +206,8 @@ export async function getMovie(env, movieId) {
 
 export async function addMovie(env, partyId, userId, data) {
   const res = await env.DB.prepare(
-    `INSERT INTO movies (party_id, added_by, kind, status, title, year, poster, note, rating, watched_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`
+    `INSERT INTO movies (party_id, added_by, kind, status, title, year, poster, note, rating, tags, watched_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
   )
     .bind(
       partyId,
@@ -219,6 +219,7 @@ export async function addMovie(env, partyId, userId, data) {
       data.poster || null,
       data.note || null,
       data.rating || null,
+      data.tags || '',
       data.status === 'watched' ? new Date().toISOString() : null
     )
     .run();
@@ -248,6 +249,7 @@ export async function updateMovie(env, movieId, data) {
     poster: data.poster !== undefined ? data.poster : current.poster,
     note: data.note !== undefined ? data.note : current.note,
     rating: data.rating !== undefined ? data.rating : current.rating,
+    tags: data.tags !== undefined ? data.tags : (current.tags || ''),
     kind: data.kind ?? current.kind,
     status: data.status ?? current.status,
     watched_at: watchedAt,
@@ -260,10 +262,11 @@ export async function updateMovie(env, movieId, data) {
        poster = ?3,
        note = ?4,
        rating = ?5,
-       kind = ?6,
-       status = ?7,
-       watched_at = ?8
-     WHERE id = ?9`
+       tags = ?6,
+       kind = ?7,
+       status = ?8,
+       watched_at = ?9
+     WHERE id = ?10`
   )
     .bind(
       fields.title,
@@ -271,6 +274,7 @@ export async function updateMovie(env, movieId, data) {
       fields.poster,
       fields.note,
       fields.rating,
+      fields.tags,
       fields.kind,
       fields.status,
       fields.watched_at,

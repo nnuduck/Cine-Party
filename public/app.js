@@ -5,6 +5,9 @@ if (tg) {
   try {
     tg.ready();
     tg.expand();
+    if (typeof tg.requestFullscreen === 'function') {
+      try { tg.requestFullscreen(); } catch {}
+    }
     tg.setHeaderColor?.('#000000');
     tg.setBackgroundColor?.('#000000');
     tg.setBottomBarColor?.('#000000');
@@ -251,8 +254,38 @@ const state = {
   inviteBase: '',
   tab: 'together', // 'together' | 'mine' | 'others'
   status: 'want', // 'want' | 'watched'
+  selectedTag: null, // active hashtag filter
+  searchQuery: '', // active text search query
   loading: true,
 };
+
+function parseTags(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  const matches = String(raw).match(/#[a-zA-Z0-9а-яА-ЯёЁ_-]+/g);
+  if (matches) {
+    const set = new Set();
+    matches.forEach((t) => set.add(t.toLowerCase()));
+    return Array.from(set);
+  }
+  return String(raw)
+    .split(/[\s,]+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .map((t) => (t.startsWith('#') ? t.toLowerCase() : `#${t.toLowerCase()}`));
+}
+
+function partyTags() {
+  const counts = new Map();
+  for (const m of state.movies) {
+    if (m.status !== state.status) continue;
+    const tags = parseTags(m.tags);
+    for (const t of tags) {
+      counts.set(t, (counts.get(t) || 0) + 1);
+    }
+  }
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+}
 
 const currentParty = () => state.parties.find((p) => p.id === state.partyId);
 
@@ -301,9 +334,12 @@ async function refreshAll() {
 // ---------- UI Rendering ----------
 function visibleMovies() {
   const myId = state.me?.id;
+  const sq = (state.searchQuery || '').trim().toLowerCase();
+  const selectedTag = state.selectedTag ? state.selectedTag.toLowerCase() : null;
+
   return state.movies.filter((m) => {
     if (m.status !== state.status) return false;
-    if (state.tab === 'together') return m.kind === 'together';
+    if (state.tab === 'together' && m.kind !== 'together') return false;
     if (state.tab === 'mine') {
       if (state.status === 'watched') {
         // Movies marked watched together also appear in personal Watched list
@@ -311,7 +347,22 @@ function visibleMovies() {
       }
       return m.kind === 'personal' && m.added_by === myId;
     }
-    return m.kind === 'personal' && m.added_by !== myId;
+    if (state.tab === 'others' && !(m.kind === 'personal' && m.added_by !== myId)) return false;
+
+    if (selectedTag) {
+      const mTags = parseTags(m.tags);
+      if (!mTags.includes(selectedTag)) return false;
+    }
+
+    if (sq) {
+      const titleMatch = (m.title || '').toLowerCase().includes(sq);
+      const noteMatch = (m.note || '').toLowerCase().includes(sq);
+      const tagsMatch = (m.tags || '').toLowerCase().includes(sq);
+      const yearMatch = (m.year || '').includes(sq);
+      if (!titleMatch && !noteMatch && !tagsMatch && !yearMatch) return false;
+    }
+
+    return true;
   });
 }
 
@@ -336,6 +387,11 @@ function renderCard(m) {
     meta = esc(m.year);
   }
 
+  const tags = parseTags(m.tags);
+  const tagsHtml = tags.length
+    ? `<div class="card-tags">${tags.slice(0, 2).map((t) => `<span class="movie-tag">${esc(t)}</span>`).join('')}${tags.length > 2 ? `<span class="movie-tag more">+${tags.length - 2}</span>` : ''}</div>`
+    : '';
+
   return `
     <button class="card" data-id="${m.id}">
       <div class="poster-box">
@@ -345,11 +401,15 @@ function renderCard(m) {
       </div>
       <div class="card-title">${esc(m.title)}</div>
       ${meta ? `<div class="card-meta">${meta}</div>` : ''}
+      ${tagsHtml}
     </button>
   `;
 }
 
 function emptyMessage() {
+  if (state.searchQuery || state.selectedTag) {
+    return 'No movies match current filter or search.';
+  }
   if (state.status === 'watched') {
     return state.tab === 'together'
       ? 'No watched movies together yet.'
@@ -386,26 +446,89 @@ function refreshMoviesContainer() {
   });
 }
 
+function renderFilterSection() {
+  const tagsList = partyTags();
+  return `
+    <div class="filter-section">
+      <div class="list-search-wrap">
+        <svg class="list-search-icon" viewBox="0 0 24 24">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" class="list-search-input" id="listSearchInput" placeholder="Search title, year, #tag..." value="${esc(state.searchQuery)}">
+        ${state.searchQuery ? `<button type="button" class="list-search-clear" id="listSearchClear">&times;</button>` : ''}
+      </div>
+      ${
+        tagsList.length
+          ? `
+            <div class="tag-filter-bar" id="tagFilterBar">
+              <button type="button" class="tag-filter-chip ${!state.selectedTag ? 'active' : ''}" data-tag="">All</button>
+              ${tagsList
+                .map(
+                  ([t, count]) => `
+                    <button type="button" class="tag-filter-chip ${state.selectedTag === t ? 'active' : ''}" data-tag="${esc(t)}">
+                      ${esc(t)} <span class="tag-chip-count">${count}</span>
+                    </button>
+                  `
+                )
+                .join('')}
+            </div>
+          `
+          : ''
+      }
+    </div>
+  `;
+}
+
+function bindFilterEvents() {
+  const input = $app.querySelector('#listSearchInput');
+  const clearBtn = $app.querySelector('#listSearchClear');
+
+  if (input) {
+    input.oninput = (e) => {
+      state.searchQuery = e.target.value;
+      if (clearBtn) clearBtn.style.display = state.searchQuery ? 'grid' : 'none';
+      refreshMoviesContainer();
+    };
+  }
+
+  if (clearBtn) {
+    clearBtn.onclick = () => {
+      state.searchQuery = '';
+      if (input) input.value = '';
+      clearBtn.style.display = 'none';
+      refreshMoviesContainer();
+    };
+  }
+
+  $app.querySelectorAll('#tagFilterBar .tag-filter-chip').forEach((chip) => {
+    chip.onclick = () => {
+      const tag = chip.dataset.tag || null;
+      state.selectedTag = state.selectedTag === tag ? null : tag;
+      haptic('light');
+      $app.querySelectorAll('#tagFilterBar .tag-filter-chip').forEach((c) => {
+        const isAll = !c.dataset.tag;
+        c.classList.toggle('active', isAll ? !state.selectedTag : c.dataset.tag === state.selectedTag);
+      });
+      refreshMoviesContainer();
+    };
+  });
+}
+
 function switchTab(newTab) {
   if (state.tab === newTab) return;
   state.tab = newTab;
-  $app.querySelectorAll('[data-tab]').forEach((b) => {
-    b.classList.toggle('active', b.dataset.tab === newTab);
-  });
-  const fab = $app.querySelector('#fabBtn');
-  if (fab) {
-    fab.style.display = state.tab === 'others' ? 'none' : 'grid';
-  }
-  refreshMoviesContainer();
+  render();
 }
 
 function switchStatus(newStatus) {
   if (state.status === newStatus) return;
   state.status = newStatus;
-  $app.querySelectorAll('[data-status]').forEach((b) => {
-    b.classList.toggle('active', b.dataset.status === newStatus);
-  });
-  refreshMoviesContainer();
+  const tagsInNewStatus = partyTags().map(([t]) => t);
+  if (state.selectedTag && !tagsInNewStatus.includes(state.selectedTag)) {
+    state.selectedTag = null;
+  }
+  render();
 }
 
 function render() {
@@ -472,6 +595,8 @@ function render() {
         <button class="seg-btn ${state.status === 'watched' ? 'active' : ''}" data-status="watched">Watched</button>
       </div>
 
+      ${renderFilterSection()}
+
       <div id="moviesContainer">
       ${
         list.length
@@ -507,6 +632,7 @@ function render() {
 
   $app.querySelector('#partySelectBtn').onclick = openPartySheet;
   $app.querySelector('#profileBtn').onclick = openProfileSheet;
+  bindFilterEvents();
   $app.querySelector('#fabBtn')?.addEventListener('click', () => {
     haptic('medium');
     openMovieEditor();
@@ -612,10 +738,18 @@ function openMovieDetail(movieId) {
       ? `<div class="detail-rating-display">RATING: ${m.rating} / 5</div>`
       : '';
 
+  const tags = parseTags(m.tags);
+  const tagsHtml = tags.length
+    ? `<div style="display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-bottom:14px;">
+        ${tags.map((t) => `<span class="movie-tag" style="padding:4px 10px; font-size:12px; cursor:pointer;" data-filtertag="${esc(t)}">${esc(t)}</span>`).join('')}
+      </div>`
+    : '';
+
   const s = openSheet(`
     <div class="detail-poster-wrap">${posterHtml}</div>
     <div class="detail-heading">${esc(m.title)}</div>
     <div class="detail-sub">${metaParts.map(esc).join(' · ')}</div>
+    ${tagsHtml}
     ${ratingHtml}
     ${m.note ? `<div class="detail-note-box">${esc(m.note)}</div>` : ''}
 
@@ -641,6 +775,14 @@ function openMovieDetail(movieId) {
         : `<div style="text-align:center; color:var(--muted); font-size:12px; margin-top:14px;">Personal item (view only)</div>`
     }
   `);
+
+  s.querySelectorAll('[data-filtertag]').forEach((chip) => {
+    chip.onclick = () => {
+      state.selectedTag = chip.dataset.filtertag;
+      closeSheet();
+      render();
+    };
+  });
 
   if (!canEdit) return;
 
@@ -702,6 +844,7 @@ function openMovieEditor(movie) {
         title: movie.title,
         year: movie.year || '',
         note: movie.note || '',
+        tags: movie.tags || '',
         poster: movie.poster || '',
         kind: movie.kind,
         status: movie.status,
@@ -711,6 +854,7 @@ function openMovieEditor(movie) {
         title: '',
         year: '',
         note: '',
+        tags: '',
         poster: '',
         kind: state.tab === 'mine' ? 'personal' : 'together',
         status: state.status,
@@ -764,6 +908,21 @@ function openMovieEditor(movie) {
           .join('')}
       </div>
     </div>
+
+    <label class="form-field">
+      <span class="form-label">Hashtags &amp; Categories</span>
+      <input type="text" id="movieTags" placeholder="#комедия #драма #боевик #sci-fi..." maxlength="200" value="${esc(draft.tags)}">
+      <div class="tag-suggest-chips" id="tagSuggestChips">
+        <button type="button" class="tag-suggest-chip" data-addtag="#комедия">+ #комедия</button>
+        <button type="button" class="tag-suggest-chip" data-addtag="#фантастика">+ #фантастика</button>
+        <button type="button" class="tag-suggest-chip" data-addtag="#боевик">+ #боевик</button>
+        <button type="button" class="tag-suggest-chip" data-addtag="#драма">+ #драма</button>
+        <button type="button" class="tag-suggest-chip" data-addtag="#триллер">+ #триллер</button>
+        <button type="button" class="tag-suggest-chip" data-addtag="#ужасы">+ #ужасы</button>
+        <button type="button" class="tag-suggest-chip" data-addtag="#мультфильм">+ #мультфильм</button>
+        <button type="button" class="tag-suggest-chip" data-addtag="#семейный">+ #семейный</button>
+      </div>
+    </label>
 
     <label class="form-field">
       <span class="form-label">Note</span>
@@ -912,6 +1071,10 @@ function openMovieEditor(movie) {
               draft.poster = item.poster;
               updateCoverUi();
             }
+            if (item.tags && !$('#movieTags').value.trim()) {
+              $('#movieTags').value = item.tags;
+              draft.tags = item.tags;
+            }
             suggestionsBox.hidden = true;
             suggestionsBox.innerHTML = '';
             haptic('light');
@@ -929,11 +1092,25 @@ function openMovieEditor(movie) {
     }
   });
 
+  // Quick tag chips in editor
+  s.querySelectorAll('[data-addtag]').forEach((chip) => {
+    chip.onclick = () => {
+      const add = chip.dataset.addtag;
+      const current = $('#movieTags').value.trim();
+      if (!current.toLowerCase().includes(add.toLowerCase())) {
+        $('#movieTags').value = current ? `${current} ${add}` : add;
+        draft.tags = $('#movieTags').value;
+        haptic('light');
+      }
+    };
+  });
+
   // Save movie
   $('#saveMovieBtn').onclick = async () => {
     const title = $('#movieTitle').value.trim();
     const year = $('#movieYear').value.trim();
     const note = $('#movieNote').value.trim();
+    const tags = $('#movieTags').value.trim();
 
     if (!title) {
       toast('Title is required');
@@ -945,6 +1122,7 @@ function openMovieEditor(movie) {
       title,
       year: year || null,
       note: note || null,
+      tags: tags || '',
       poster: draft.poster || null,
       kind: draft.kind,
       status: draft.status,

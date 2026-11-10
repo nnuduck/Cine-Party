@@ -46,6 +46,9 @@ function cleanMovie(b) {
     const r = Number(b.rating);
     out.rating = Number.isInteger(r) && r >= 1 && r <= 5 ? r : null;
   }
+  if ('tags' in b) {
+    out.tags = String(b.tags || '').trim().slice(0, 300);
+  }
   if ('kind' in b && ['together', 'personal'].includes(b.kind)) {
     out.kind = b.kind;
   }
@@ -278,6 +281,7 @@ async function handleApi(request, env, url, path, method) {
       year: m.year,
       poster: m.poster,
       note: m.note,
+      tags: m.tags || '',
       rating: m.status === 'watched' ? m.rating : null,
     });
     return json(created, 201);

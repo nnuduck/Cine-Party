@@ -1,84 +1,153 @@
-// Open movie search engine (Cinemeta open catalog + TMDB fallback).
-// Requires ZERO API keys from users!
+// Multilingual Movie & Series Search Engine.
+// Full support for Russian and English queries, Soviet/Russian/World cinema, TV series and anime.
+// Free open multi-catalog: TMDB Multi-search with ru-RU localization + Cinemeta movie/series fallback.
+
+const TMDB_DEFAULT_KEY = '4e44d9029b1270a757cddc766a1bcb63';
+
+const GENRE_MAP_RU = {
+  28: 'боевик',
+  12: 'приключения',
+  16: 'мультфильм',
+  35: 'комедия',
+  80: 'криминал',
+  99: 'документальный',
+  18: 'драма',
+  10751: 'семейный',
+  14: 'фэнтези',
+  36: 'история',
+  27: 'ужасы',
+  10402: 'музыка',
+  9648: 'детектив',
+  10749: 'мелодрама',
+  878: 'фантастика',
+  10770: 'телефильм',
+  53: 'триллер',
+  10752: 'военный',
+  37: 'вестерн',
+  10759: 'боевик-приключения',
+  10762: 'детский',
+  10765: 'фантастика-фэнтези',
+};
 
 export async function searchMovies(query, env = {}) {
   const q = String(query || '').trim();
   if (q.length < 2) return [];
 
   const results = [];
-  const seen = new Set();
+  const seenTitles = new Set();
+  const apiKey = env.TMDB_API_KEY || TMDB_DEFAULT_KEY;
+  const isCyrillic = /[а-яё]/i.test(q);
 
-  // 1. Try TMDB if API key is configured
-  if (env.TMDB_API_KEY) {
+  // 1. TMDB Multi-search (Movies & Series with Russian localization)
+  if (apiKey) {
     try {
-      const tmdbUrl = new URL('https://api.themoviedb.org/3/search/movie');
+      const tmdbUrl = new URL('https://api.themoviedb.org/3/search/multi');
+      tmdbUrl.searchParams.set('api_key', apiKey);
       tmdbUrl.searchParams.set('query', q.slice(0, 100));
+      tmdbUrl.searchParams.set('language', isCyrillic ? 'ru-RU' : 'en-US');
       tmdbUrl.searchParams.set('include_adult', 'false');
       tmdbUrl.searchParams.set('page', '1');
 
       const res = await fetch(tmdbUrl.toString(), {
-        headers: {
-          Authorization: `Bearer ${env.TMDB_API_KEY}`,
-          Accept: 'application/json',
-        },
-        signal: AbortSignal.timeout(4000),
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(4500),
       });
 
       if (res.ok) {
         const data = await res.json();
-        for (const item of (data.results || []).slice(0, 8)) {
-          if (!item.title) continue;
-          const key = item.title.toLowerCase();
-          seen.add(key);
+        for (const item of (data.results || []).slice(0, 12)) {
+          // Skip people/crew results
+          if (item.media_type === 'person') continue;
+
+          const title = (item.title || item.name || '').trim();
+          if (!title) continue;
+
+          const origTitle = (item.original_title || item.original_name || '').trim();
+          const key = title.toLowerCase();
+          if (seenTitles.has(key)) continue;
+          seenTitles.add(key);
+
+          const dateStr = item.release_date || item.first_air_date || '';
+          const year = dateStr.slice(0, 4);
+          const poster = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : null;
+
+          // Build genre hashtags
+          const tags = (item.genre_ids || [])
+            .map((gid) => GENRE_MAP_RU[gid])
+            .filter(Boolean)
+            .slice(0, 3)
+            .map((t) => `#${t}`)
+            .join(' ');
+
           results.push({
             id: `tmdb_${item.id}`,
-            title: item.title,
-            year: item.release_date ? item.release_date.slice(0, 4) : '',
-            poster: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : null,
-            description: item.overview || '',
-          });
-        }
-      }
-    } catch {
-      // Gracefully continue to open catalog
-    }
-  }
-
-  // 2. Open source movie catalog (Cinemeta - IMDb metadata, 100% free & open, no keys needed)
-  if (results.length < 6) {
-    try {
-      const cinemetaUrl = `https://v3-cinemeta.strem.io/catalog/movie/top/search=${encodeURIComponent(q.slice(0, 80))}.json`;
-      const res = await fetch(cinemetaUrl, {
-        headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(4000),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        for (const meta of (data.metas || []).slice(0, 10)) {
-          if (!meta.name) continue;
-          const key = meta.name.toLowerCase();
-          if (seen.has(key)) continue;
-          seen.add(key);
-
-          let poster = meta.poster || null;
-          if (poster && poster.includes('._V1_SX')) {
-            poster = poster.replace(/\._V1_SX\d+\.jpg$/, '._V1_SX600.jpg');
-          }
-
-          results.push({
-            id: meta.id || meta.imdb_id || `cm_${results.length}`,
-            title: meta.name,
-            year: String(meta.year || meta.releaseInfo || '').slice(0, 4),
+            title,
+            original_title: origTitle && origTitle.toLowerCase() !== key ? origTitle : null,
+            year,
             poster,
-            description: meta.description || '',
+            tags,
+            description: item.overview || '',
           });
 
           if (results.length >= 8) break;
         }
       }
     } catch {
-      // Gracefully ignore
+      // Gracefully continue to Cinemeta fallback
+    }
+  }
+
+  // 2. Cinemeta fallback (Open catalog: search both movies and series)
+  if (results.length < 5) {
+    const cinemetaTypes = ['movie', 'series'];
+    for (const cType of cinemetaTypes) {
+      if (results.length >= 8) break;
+      try {
+        const cinemetaUrl = `https://v3-cinemeta.strem.io/catalog/${cType}/top/search=${encodeURIComponent(q.slice(0, 80))}.json`;
+        const res = await fetch(cinemetaUrl, {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(4000),
+        });
+
+        if (res.ok) {
+          const text = await res.text();
+          if (text.startsWith('{')) {
+            const data = JSON.parse(text);
+            for (const meta of (data.metas || []).slice(0, 8)) {
+              if (!meta.name) continue;
+              const title = meta.name.trim();
+              const key = title.toLowerCase();
+              if (seenTitles.has(key)) continue;
+              seenTitles.add(key);
+
+              let poster = meta.poster || null;
+              if (poster && poster.includes('._V1_SX')) {
+                poster = poster.replace(/\._V1_SX\d+\.jpg$/, '._V1_SX600.jpg');
+              }
+
+              // Extract genres if available
+              const tags = (meta.genres || [])
+                .slice(0, 3)
+                .map((g) => `#${String(g).toLowerCase().replace(/\s+/g, '-')}`)
+                .join(' ');
+
+              results.push({
+                id: meta.id || meta.imdb_id || `cm_${results.length}`,
+                title,
+                original_title: null,
+                year: String(meta.year || meta.releaseInfo || '').slice(0, 4),
+                poster,
+                tags,
+                description: meta.description || '',
+              });
+
+              if (results.length >= 8) break;
+            }
+          }
+        }
+      } catch {
+        // Continue
+      }
     }
   }
 
