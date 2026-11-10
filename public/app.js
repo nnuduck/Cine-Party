@@ -22,7 +22,7 @@ function updateSafeArea() {
     root.style.setProperty('--tg-safe-area-inset-top', '0px');
     root.style.setProperty('--tg-content-safe-area-inset-top', '0px');
     root.style.setProperty('--tg-content-safe-area-inset-bottom', '0px');
-    root.style.setProperty('--tg-total-top-inset', '24px');
+    root.style.setProperty('--tg-total-top-inset', '16px');
     return;
   }
 
@@ -31,29 +31,32 @@ function updateSafeArea() {
   const sBottom = Number(tg.safeAreaInset?.bottom) || 0;
   const cBottom = Number(tg.contentSafeAreaInset?.bottom) || 0;
 
-  // ВСЕГДА ставим переменные, даже если 0
   root.style.setProperty('--tg-safe-area-inset-top', `${sTop}px`);
   root.style.setProperty('--tg-content-safe-area-inset-top', `${cTop}px`);
   root.style.setProperty('--tg-content-safe-area-inset-bottom', `${Math.max(sBottom, cBottom)}px`);
 
-  // Если contentSafeAreaInset.top = 0 во фуллскрине — резервируем зону под нативные кнопки
-  const fullscreenChrome = tg.isFullscreen ? 88 : 0;
-  const chrome = Math.max(cTop, fullscreenChrome);
-  const resolvedTop = Math.max(sTop + chrome + 16, 72);
+  let resolvedTop;
+  if (tg.isFullscreen && cTop < 40) {
+    // Старый клиент: fullscreen есть, contentSafeAreaInset не отдаёт.
+    // Резервируем 60px под нативные кнопки Telegram.
+    resolvedTop = sTop + 60;
+  } else {
+    // Современный клиент: cTop уже включает кнопки, +8px воздуха.
+    resolvedTop = sTop + cTop + 8;
+  }
+  resolvedTop = Math.max(resolvedTop, 12);
 
   root.style.setProperty('--tg-total-top-inset', `${resolvedTop}px`);
 
-  // ВРЕМЕННЫЙ лог для проверки на устройстве — не удалять до подтверждения
-  console.log('[SafeArea]', {
-    sTop,
-    cTop,
-    sBottom,
-    cBottom,
-    isFullscreen: !!tg.isFullscreen,
-    viewportHeight: tg.viewportHeight,
-    viewportStableHeight: tg.viewportStableHeight,
-    resolvedTop,
-  });
+  // Диагностика через нативный Telegram-алерт (работает без DevTools).
+  // Активируется только когда пользователь попросит.
+  if (localStorage.getItem('cinema_safearea_debug') === '1') {
+    try {
+      tg.showAlert?.(
+        `sTop=${sTop}\ncTop=${cTop}\nisFullscreen=${!!tg.isFullscreen}\nresolvedTop=${resolvedTop}`
+      );
+    } catch {}
+  }
 }
 updateSafeArea();
 try { tg?.onEvent?.('safeAreaChanged', updateSafeArea); } catch {}
@@ -63,6 +66,15 @@ try { tg?.onEvent?.('viewportChanged', updateSafeArea); } catch {}
 window.addEventListener('resize', updateSafeArea);
 
 const $app = document.getElementById('app');
+
+document.body.addEventListener('click', (e) => {
+  const card = e.target.closest('.card');
+  if (!card || !card.dataset.id) return;
+  const id = Number(card.dataset.id);
+  if (!Number.isFinite(id) || id <= 0) return;
+  haptic('light');
+  openMovieDetail(id);
+});
 
 function esc(str) {
   return String(str ?? '').replace(/[&<>"']/g, (c) => ({
@@ -195,6 +207,7 @@ function requestAddToHomeScreen() {
     window.deferredInstallPrompt.userChoice?.then((choice) => {
       if (choice.outcome === 'accepted') {
         homeScreenStatus = 'added';
+        hapticNotice('success');
         toast('Added to Home Screen');
       }
       window.deferredInstallPrompt = null;
@@ -202,7 +215,17 @@ function requestAddToHomeScreen() {
     return;
   }
 
-  openAddToHomeGuideSheet();
+  if (tg?.showAlert) {
+    tg.showAlert(
+      'Add to Home Screen:\n\n' +
+      '1. Tap ⋮ in top-right\n' +
+      '2. Choose "Add to Home Screen"\n' +
+      '3. Confirm\n\n' +
+      'If this option is missing, open the bot via t.me/cine_party_bot/cinema'
+    );
+  } else {
+    openAddToHomeGuideSheet();
+  }
 }
 
 // ---------- Accent Customization ----------
@@ -266,23 +289,32 @@ function authHeader() {
   return `dev ${id}:${encodeURIComponent(name)}`;
 }
 
+let pendingMutationsCount = 0;
+
 async function api(path, { method = 'GET', body } = {}) {
-  const headers = { Authorization: authHeader() };
-  if (body && !(body instanceof FormData)) {
-    headers['Content-Type'] = 'application/json';
-    body = JSON.stringify(body);
+  const isMutation = method !== 'GET';
+  if (isMutation) pendingMutationsCount++;
+  try {
+    const headers = { Authorization: authHeader() };
+    if (body && !(body instanceof FormData)) {
+      headers['Content-Type'] = 'application/json';
+      body = JSON.stringify(body);
+    }
+    const res = await fetch('/api' + path, { method, headers, body });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    return data;
+  } finally {
+    if (isMutation) pendingMutationsCount--;
   }
-  const res = await fetch('/api' + path, { method, headers, body });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(data.error || `HTTP ${res.status}`);
-  }
-  return data;
 }
 
 // ---------- Bottom Sheet Helpers ----------
 let currentOverlay = null;
 let backButtonBound = false;
+let onSheetClose = null;
 
 function openSheet(contentHtml) {
   closeSheet();
@@ -319,6 +351,11 @@ function closeSheet() {
       backButtonBound = false;
     }
   }
+  if (onSheetClose) {
+    const cb = onSheetClose;
+    onSheetClose = null;
+    cb();
+  }
 }
 
 function confirmSheet({ title, message, confirmText = 'Delete', cancelText = 'Cancel' }) {
@@ -337,14 +374,18 @@ function confirmSheet({ title, message, confirmText = 'Delete', cancelText = 'Ca
     const finish = (val) => {
       if (resolved) return;
       resolved = true;
+      onSheetClose = null;
       closeSheet();
       resolve(val);
     };
     s.querySelector('#confirmYes').onclick = () => finish(true);
     s.querySelector('#confirmNo').onclick = () => finish(false);
-    s.closest('.overlay')?.addEventListener('click', (e) => {
-      if (e.target.classList.contains('overlay')) finish(false);
-    });
+    onSheetClose = () => {
+      if (!resolved) {
+        resolved = true;
+        resolve(false);
+      }
+    };
   });
 }
 
@@ -480,6 +521,28 @@ function visibleMovies() {
   });
 }
 
+function hashString(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) {
+    h = ((h << 5) + h) ^ str.charCodeAt(i);
+  }
+  return h >>> 0;
+}
+
+function hashMovie(m) {
+  return [
+    m.title || '',
+    m.poster || '',
+    m.status || '',
+    m.rating || '',
+    m.tags || '',
+    m.year || '',
+    m.note ? hashString(String(m.note)) : 0,
+    m.kind || '',
+    m.added_by_name || '',
+  ].join('|');
+}
+
 function renderCard(m) {
   const tagBadge =
     m.kind === 'together' && state.tab !== 'together'
@@ -507,7 +570,7 @@ function renderCard(m) {
     : '';
 
   return `
-    <button class="card" data-id="${m.id}">
+    <button class="card" data-id="${m.id}" data-hash="${esc(hashMovie(m))}">
       <div class="poster-box">
         ${posterHtml}
         ${tagBadge}
@@ -577,13 +640,6 @@ function refreshMoviesContainer() {
   if (!grid) {
     container.innerHTML = '<div class="grid"></div>';
     grid = container.querySelector('.grid');
-    // Delegated click — ОДИН раз на grid
-    grid.addEventListener('click', (e) => {
-      const card = e.target.closest('.card');
-      if (!card) return;
-      haptic('light');
-      openMovieDetail(Number(card.dataset.id));
-    });
   }
 
   const wantedIds = new Set(list.map((m) => m.id));
@@ -600,8 +656,14 @@ function refreshMoviesContainer() {
   // Insert/reorder in place
   list.forEach((m, index) => {
     let card = existing.get(m.id);
+    const newHash = hashMovie(m);
     if (!card) {
       card = createCardEl(m);
+      existing.set(m.id, card);
+    } else if (card.dataset.hash !== newHash) {
+      const newCard = createCardEl(m);
+      card.replaceWith(newCard);
+      card = newCard;
       existing.set(m.id, card);
     }
     const current = grid.children[index];
@@ -1592,6 +1654,15 @@ function openProfileSheet() {
       Minimalist movie tracker with editorial serif typography.<br><br>
       Powered by open source movie catalog.
     </div>
+
+    <div style="margin-top:16px;">
+      <button type="button" class="btn" id="addToHomeBtn" style="width:100%; justify-content:center;">
+        <svg class="btn-icon-svg" viewBox="0 0 24 24">
+          <path d="M12 2L2 12h3v8h6v-6h2v6h6v-8h3L12 2z"/>
+        </svg>
+        <span id="addToHomeLabel">Add to Home Screen</span>
+      </button>
+    </div>
   `);
 
   // Avatar upload handler
@@ -1672,6 +1743,46 @@ function openProfileSheet() {
       }
     };
   }
+
+  const addHomeBtn = s.querySelector('#addToHomeBtn');
+  const addHomeLabel = s.querySelector('#addToHomeLabel');
+  if (addHomeBtn) {
+    if (homeScreenStatus === 'added') {
+      addHomeBtn.disabled = true;
+      if (addHomeLabel) addHomeLabel.textContent = 'Added to Home Screen';
+    } else if (tg && typeof tg.checkHomeScreenStatus === 'function') {
+      try {
+        tg.checkHomeScreenStatus((status) => {
+          homeScreenStatus = status;
+          if (status === 'added') {
+            addHomeBtn.disabled = true;
+            if (addHomeLabel) addHomeLabel.textContent = 'Added to Home Screen';
+          } else if (status === 'unsupported') {
+            if (addHomeLabel) addHomeLabel.textContent = 'Add to Home Screen (not supported)';
+          }
+        });
+      } catch {}
+    }
+    addHomeBtn.onclick = requestAddToHomeScreen;
+  }
+
+  const debugWrap = document.createElement('div');
+  debugWrap.style.marginTop = '16px';
+  debugWrap.innerHTML = `<button type="button" class="btn" id="showSafeAreaBtn" style="font-size:12px; opacity:0.75;">Show SafeArea values</button>`;
+  s.appendChild(debugWrap);
+  s.querySelector('#showSafeAreaBtn').onclick = () => {
+    const sTop = Number(tg?.safeAreaInset?.top) || 0;
+    const cTop = Number(tg?.contentSafeAreaInset?.top) || 0;
+    const resolved = getComputedStyle(document.documentElement)
+      .getPropertyValue('--tg-total-top-inset').trim();
+    try {
+      tg?.showAlert?.(
+        `sTop=${sTop}\ncTop=${cTop}\nisFullscreen=${!!tg?.isFullscreen}\nresolvedTop=${resolved}`
+      );
+    } catch {
+      toast(`sTop=${sTop}, cTop=${cTop}, resolved=${resolved}`);
+    }
+  };
 }
 
 // ---------- App Initialization ----------
@@ -1715,18 +1826,26 @@ function openProfileSheet() {
 })();
 
 let pollTimer = null;
+let isPolling = false;
 let lastSyncAt = 0;
 
 function startPolling() {
   if (pollTimer) return;
   pollTimer = setInterval(async () => {
+    if (isPolling) return; // защита от параллельного запуска
+    if (pendingMutationsCount > 0) return; // не перезаписывать данные во время мутаций
     if (document.visibilityState !== 'visible') return;
     if (currentOverlay) return; // не мешаем открытым sheet
+    isPolling = true;
     try {
       await loadPartyMovies();
       refreshMoviesContainer();
       lastSyncAt = Date.now();
-    } catch { /* silent */ }
+    } catch {
+      // silent — не спамим пользователя ошибками polling
+    } finally {
+      isPolling = false;
+    }
   }, 30000);
 }
 
