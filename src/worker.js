@@ -104,12 +104,48 @@ export default {
     // Static assets fallback
     return env.ASSETS ? await env.ASSETS.fetch(request) : new Response('Not Found', { status: 404 });
   },
+
+  async scheduled(event, env, ctx) {
+    try {
+      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      await env.DB.prepare(`
+        DELETE FROM covers 
+        WHERE created_at < ? 
+        AND id NOT IN (SELECT substr(poster, length('/api/covers/')+1) 
+                       FROM movies WHERE poster LIKE '/api/covers/%')
+        AND id NOT IN (SELECT substr(avatar_url, length('/api/covers/')+1) 
+                       FROM users WHERE avatar_url LIKE '/api/covers/%')
+      `).bind(cutoff).run();
+    } catch (e) {
+      console.error('Scheduled cover cleanup failed:', e);
+    }
+  },
 };
+
+// NOTE: rate limit is per Worker instance, not global across 
+// all Cloudflare instances. Sufficient for small-scale abuse 
+// protection. For strict enforcement use KV or Durable Objects.
+const rateLimitMap = new Map();
+
+function checkRateLimit(userId, maxReq = 10, windowMs = 10000) {
+  const now = Date.now();
+  const entry = rateLimitMap.get(userId) || { count: 0, resetAt: now + windowMs };
+  if (now > entry.resetAt) {
+    entry.count = 0;
+    entry.resetAt = now + windowMs;
+  }
+  entry.count++;
+  rateLimitMap.set(userId, entry);
+  if (entry.count > maxReq) {
+    throw new HttpError(429, 'Rate limit exceeded. Please wait a moment.');
+  }
+}
 
 async function handleApi(request, env, url, path, method) {
   // Movie search route (open catalog + optional TMDB, auth required)
   if ((path === '/api/movies/search' || path === '/api/tmdb/search') && method === 'GET') {
-    await authenticate(request, env);
+    const user = await authenticate(request, env);
+    checkRateLimit(user.id, 20, 10000);
     const q = url.searchParams.get('q') || '';
     const results = await searchMovies(q, env);
     return json({ results });
@@ -118,6 +154,7 @@ async function handleApi(request, env, url, path, method) {
   // Cover image upload
   if (path === '/api/covers' && method === 'POST') {
     const user = await authenticate(request, env);
+    checkRateLimit(user.id, 10, 10000);
     let bytes = null;
     let mime = 'image/webp';
 
@@ -144,6 +181,20 @@ async function handleApi(request, env, url, path, method) {
     }
     if (bytes.byteLength < 12) {
       throw new HttpError(400, 'Invalid image data');
+    }
+
+    // Magic bytes verification
+    const isWebP = bytes.byteLength >= 12 &&
+      bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 && // 'RIFF'
+      bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50; // 'WEBP'
+    const isJpeg = bytes.byteLength >= 3 &&
+      bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF;
+    const isPng = bytes.byteLength >= 8 &&
+      bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47 &&
+      bytes[4] === 0x0D && bytes[5] === 0x0A && bytes[6] === 0x1A && bytes[7] === 0x0A;
+
+    if (!isWebP && !isJpeg && !isPng) {
+      throw new HttpError(400, 'Invalid image data (unrecognized format)');
     }
 
     const coverId = await db.saveCover(env, user.id, mime, bytes);

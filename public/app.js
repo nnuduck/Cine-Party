@@ -1766,23 +1766,25 @@ function openProfileSheet() {
     addHomeBtn.onclick = requestAddToHomeScreen;
   }
 
-  const debugWrap = document.createElement('div');
-  debugWrap.style.marginTop = '16px';
-  debugWrap.innerHTML = `<button type="button" class="btn" id="showSafeAreaBtn" style="font-size:12px; opacity:0.75;">Show SafeArea values</button>`;
-  s.appendChild(debugWrap);
-  s.querySelector('#showSafeAreaBtn').onclick = () => {
-    const sTop = Number(tg?.safeAreaInset?.top) || 0;
-    const cTop = Number(tg?.contentSafeAreaInset?.top) || 0;
-    const resolved = getComputedStyle(document.documentElement)
-      .getPropertyValue('--tg-total-top-inset').trim();
-    try {
-      tg?.showAlert?.(
-        `sTop=${sTop}\ncTop=${cTop}\nisFullscreen=${!!tg?.isFullscreen}\nresolvedTop=${resolved}`
-      );
-    } catch {
-      toast(`sTop=${sTop}, cTop=${cTop}, resolved=${resolved}`);
-    }
-  };
+  if (localStorage.getItem('cinema_debug') === '1') {
+    const debugWrap = document.createElement('div');
+    debugWrap.style.marginTop = '16px';
+    debugWrap.innerHTML = `<button type="button" class="btn" id="showSafeAreaBtn" style="font-size:12px; opacity:0.75;">Show SafeArea values</button>`;
+    s.appendChild(debugWrap);
+    s.querySelector('#showSafeAreaBtn').onclick = () => {
+      const sTop = Number(tg?.safeAreaInset?.top) || 0;
+      const cTop = Number(tg?.contentSafeAreaInset?.top) || 0;
+      const resolved = getComputedStyle(document.documentElement)
+        .getPropertyValue('--tg-total-top-inset').trim();
+      try {
+        tg?.showAlert?.(
+          `sTop=${sTop}\ncTop=${cTop}\nisFullscreen=${!!tg?.isFullscreen}\nresolvedTop=${resolved}`
+        );
+      } catch {
+        toast(`sTop=${sTop}, cTop=${cTop}, resolved=${resolved}`);
+      }
+    };
+  }
 }
 
 // ---------- App Initialization ----------
