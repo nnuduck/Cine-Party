@@ -9,6 +9,7 @@
   --accent-contrast: #FFFFFF;
   --accent-glow: rgba(215, 25, 33, 0.35);
   --accent-glow-strong: rgba(215, 25, 33, 0.5);
+  --tg-total-top-inset: 96px;
   --font-serif: "New York", "Charter", "Georgia", "Cambria", "Times New Roman", serif;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --safe-top: env(safe-area-inset-top, 0px);
@@ -54,74 +55,12 @@ button {
 }
 
 .screen {
-  padding-top: max(env(safe-area-inset-top, 0px), var(--tg-content-safe-area-inset-top, 0px), var(--tg-safe-area-inset-top, 0px), 64px);
+  padding-top: var(--tg-total-top-inset, max(calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px) + 16px), calc(env(safe-area-inset-top, 0px) + 64px), 96px));
   padding-left: 16px;
   padding-right: 16px;
-  padding-bottom: calc(max(env(safe-area-inset-bottom, 0px), var(--tg-safe-area-inset-bottom, 0px), 16px) + 84px);
-  max-width: 600px;
+  padding-bottom: calc(var(--safe-bottom) + 96px);
+  max-width: 640px;
   margin: 0 auto;
-}
-
-/* ---------- Top Brand Bar (Clean Editorial Header below Telegram buttons) ---------- */
-.top-brand-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 18px;
-}
-
-.brand-title {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: var(--text);
-}
-
-.brand-room-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 12px;
-  border-radius: 15px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  color: var(--text);
-  font-size: 12.5px;
-  font-weight: 600;
-  cursor: pointer;
-  max-width: 170px;
-  transition: transform 0.12s var(--ease-spring), background 0.16s ease, border-color 0.16s ease;
-}
-
-.brand-room-pill:active {
-  transform: scale(0.96);
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.18);
-}
-
-.room-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  flex-shrink: 0;
-  box-shadow: 0 0 8px var(--accent-glow);
-}
-
-.room-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.room-count {
-  font-size: 11px;
-  color: var(--muted);
-  flex-shrink: 0;
 }
 
 /* ---------- Top Bar (Minimalist Telegram/iOS Pill Tablets) ---------- */
@@ -441,8 +380,6 @@ button {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 12px;
-  animation: gridFadeSlide 0.28s var(--ease-spring) both;
-  will-change: transform, opacity;
 }
 
 @media (min-width: 520px) {
@@ -758,124 +695,38 @@ button {
   line-height: 1.5;
 }
 
-/* ---------- FAB (Legacy / Optional) ---------- */
+/* ---------- FAB ---------- */
 .fab {
-  display: none !important;
-}
-
-/* ---------- Floating Liquid Glass Dock (Spotify / iOS Dock) ---------- */
-.liquid-dock {
   position: fixed;
-  bottom: max(16px, env(safe-area-inset-bottom, 16px));
-  left: 50%;
-  transform: translateX(-50%);
-  width: calc(100% - 28px);
-  max-width: 410px;
-  height: 64px;
-  border-radius: 32px;
-  background: rgba(20, 20, 24, 0.82);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65), inset 0 1px 1px 0 rgba(255, 255, 255, 0.2);
-  display: flex;
-  align-items: center;
-  justify-content: space-around;
-  padding: 0 8px;
-  z-index: 50;
-  user-select: none;
-}
-
-.dock-item {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  height: 100%;
-  padding: 6px 4px;
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  min-width: 0;
-  transition: transform 0.12s var(--ease-spring), color 0.15s ease;
-}
-
-.dock-item:active {
-  transform: scale(0.92);
-}
-
-.dock-item.active {
-  color: var(--text);
-}
-
-.dock-item svg {
-  width: 20px;
-  height: 20px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  transition: stroke 0.15s ease;
-}
-
-.dock-item-label {
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 76px;
-  line-height: 1.1;
-}
-
-.dock-add-btn {
-  color: var(--text);
-}
-
-.dock-add-circle {
-  width: 28px;
-  height: 28px;
+  right: 20px;
+  bottom: calc(var(--safe-bottom) + 24px);
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   background: var(--accent);
   color: var(--accent-contrast);
   display: grid;
   place-items: center;
-  box-shadow: 0 3px 12px var(--accent-glow);
-  transition: transform 0.12s var(--ease-spring), box-shadow 0.16s ease;
+  z-index: 40;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 8px 24px var(--accent-glow-strong), inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: transform 0.18s var(--ease-spring), background-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.dock-add-circle svg {
-  width: 16px;
-  height: 16px;
-  stroke: var(--accent-contrast);
-  stroke-width: 2.5;
+.fab:active {
+  transform: scale(0.92);
 }
 
-.dock-avatar {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  overflow: hidden;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  display: grid;
-  place-items: center;
-  font-size: 10px;
-  font-weight: 700;
-  flex-shrink: 0;
-  color: var(--text);
-}
-
-.dock-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
+.fab svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 /* ---------- Floating Island Sheet (Detached iOS Modal Card) ---------- */
