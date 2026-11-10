@@ -4,29 +4,29 @@
 
 const TMDB_DEFAULT_KEY = '4e44d9029b1270a757cddc766a1bcb63';
 
-const GENRE_MAP_RU = {
-  28: 'боевик',
-  12: 'приключения',
-  16: 'мультфильм',
-  35: 'комедия',
-  80: 'криминал',
-  99: 'документальный',
-  18: 'драма',
-  10751: 'семейный',
-  14: 'фэнтези',
-  36: 'история',
-  27: 'ужасы',
-  10402: 'музыка',
-  9648: 'детектив',
-  10749: 'мелодрама',
-  878: 'фантастика',
-  10770: 'телефильм',
-  53: 'триллер',
-  10752: 'военный',
-  37: 'вестерн',
-  10759: 'боевик-приключения',
-  10762: 'детский',
-  10765: 'фантастика-фэнтези',
+const GENRE_MAP_EN = {
+  28: 'action',
+  12: 'adventure',
+  16: 'animation',
+  35: 'comedy',
+  80: 'crime',
+  99: 'documentary',
+  18: 'drama',
+  10751: 'family',
+  14: 'fantasy',
+  36: 'history',
+  27: 'horror',
+  10402: 'music',
+  9648: 'mystery',
+  10749: 'romance',
+  878: 'sci-fi',
+  10770: 'tv-movie',
+  53: 'thriller',
+  10752: 'war',
+  37: 'western',
+  10759: 'action-adventure',
+  10762: 'kids',
+  10765: 'sci-fi-fantasy',
 };
 
 export async function searchMovies(query, env = {}) {
@@ -73,7 +73,7 @@ export async function searchMovies(query, env = {}) {
 
           // Build genre hashtags
           const tags = (item.genre_ids || [])
-            .map((gid) => GENRE_MAP_RU[gid])
+            .map((gid) => GENRE_MAP_EN[gid])
             .filter(Boolean)
             .slice(0, 3)
             .map((t) => `#${t}`)

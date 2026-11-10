@@ -16,6 +16,7 @@ export async function getUser(env, id) {
   return await env.DB.prepare(
     `SELECT id, first_name, username, accent, avatar_url, custom_name,
             COALESCE(custom_name, first_name, 'You') AS display_name,
+            custom_tags,
             created_at
      FROM users WHERE id = ?`
   )

@@ -389,12 +389,51 @@ function confirmSheet({ title, message, confirmText = 'Delete', cancelText = 'Ca
   });
 }
 
+function promptSheet({ title, message, placeholder = '', initialValue = '' }) {
+  return new Promise((resolve) => {
+    const s = openSheet(`
+      <h2 class="sheet-title display">${esc(title)}</h2>
+      <div style="color:var(--muted); font-size:14px; line-height:1.4; margin-bottom:16px;">
+        ${esc(message || '')}
+      </div>
+      <input type="text" id="promptInput" value="${esc(initialValue)}" placeholder="${esc(placeholder)}" maxlength="40" style="width:100%; margin-bottom:16px;">
+      <div class="action-stack" style="justify-content:center;">
+        <button type="button" class="btn primary" id="promptOk">OK</button>
+        <button type="button" class="btn" id="promptCancel">Cancel</button>
+      </div>
+    `);
+    let resolved = false;
+    const finish = (val) => {
+      if (resolved) return;
+      resolved = true;
+      onSheetClose = null;
+      closeSheet();
+      resolve(val);
+    };
+    const inp = s.querySelector('#promptInput');
+    setTimeout(() => inp?.focus(), 100);
+    s.querySelector('#promptOk').onclick = () => finish(inp.value);
+    s.querySelector('#promptCancel').onclick = () => finish(null);
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') finish(inp.value);
+      if (e.key === 'Escape') finish(null);
+    });
+    onSheetClose = () => {
+      if (!resolved) {
+        resolved = true;
+        resolve(null);
+      }
+    };
+  });
+}
+
 // ---------- Application State ----------
 const state = {
   me: null,
   parties: [],
   partyId: Number(localStorage.getItem('cinema_party_id')) || null,
   movies: [],
+  customTags: [],
   inviteBase: '',
   tab: 'together', // 'together' | 'mine' | 'others'
   status: 'want', // 'want' | 'watched'
@@ -471,6 +510,7 @@ async function loadInitialData() {
   state.me = data.user;
   state.parties = data.parties;
   state.inviteBase = data.invite_base;
+  state.customTags = Array.isArray(data.user?.custom_tags) ? data.user.custom_tags : [];
 
   if (data.user?.accent) {
     applyAccent(data.user.accent);
@@ -479,6 +519,20 @@ async function loadInitialData() {
   if (!currentParty()) {
     state.partyId = state.parties[0]?.id || null;
     if (state.partyId) localStorage.setItem('cinema_party_id', state.partyId);
+  }
+}
+
+async function saveCustomTags(tags) {
+  try {
+    const res = await api('/me/custom-tags', {
+      method: 'PATCH',
+      body: { tags },
+    });
+    state.customTags = res.tags || [];
+    return state.customTags;
+  } catch (e) {
+    toast(e.message || 'Failed to save tag');
+    return state.customTags;
   }
 }
 
@@ -560,6 +614,11 @@ function renderCard(m) {
   let meta = '';
   if (state.tab === 'others') {
     meta = esc(m.added_by_name || 'Friend');
+  } else if (state.tab === 'together') {
+    const parts = [];
+    if (m.year) parts.push(esc(m.year));
+    parts.push(`Added by ${esc(m.added_by_name || 'Friend')}`);
+    meta = parts.join(' · ');
   } else if (m.year) {
     meta = esc(m.year);
   }
@@ -1080,6 +1139,78 @@ async function resizeImage(file, maxW = 600) {
   });
 }
 
+const DEFAULT_TAG_PRESETS = [
+  '#action',
+  '#comedy',
+  '#drama',
+  '#horror',
+  '#thriller',
+  '#sci-fi',
+  '#animation',
+  '#romance',
+  '#documentary',
+  '#family',
+];
+
+function renderTagChips(container, onAdd, customTags = [], onDeleteCustom = null) {
+  if (!container) return;
+  const all = [...customTags, ...DEFAULT_TAG_PRESETS];
+  const seen = new Set();
+  container.innerHTML = all
+    .filter((t) => {
+      const key = t.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((t) => {
+      const isCustom = customTags.includes(t);
+      return `<button type="button" class="tag-suggest-chip${isCustom ? ' custom' : ''}" data-addtag="${esc(t)}"${isCustom ? ' data-iscustom="1"' : ''}>+ ${esc(t)}</button>`;
+    })
+    .join('');
+
+  container.querySelectorAll('[data-addtag]').forEach((chip) => {
+    let pressTimer = null;
+    let didLongPress = false;
+
+    const startPress = () => {
+      didLongPress = false;
+      if (chip.dataset.iscustom === '1' && onDeleteCustom) {
+        pressTimer = setTimeout(() => {
+          didLongPress = true;
+          haptic('medium');
+          onDeleteCustom(chip.dataset.addtag);
+        }, 500);
+      }
+    };
+
+    const cancelPress = () => {
+      if (pressTimer) {
+        clearTimeout(pressTimer);
+        pressTimer = null;
+      }
+    };
+
+    chip.addEventListener('touchstart', startPress, { passive: true });
+    chip.addEventListener('touchend', (e) => {
+      cancelPress();
+      if (didLongPress) e.preventDefault();
+    });
+    chip.addEventListener('touchcancel', cancelPress);
+    chip.addEventListener('mousedown', startPress);
+    chip.addEventListener('mouseup', cancelPress);
+    chip.addEventListener('mouseleave', cancelPress);
+
+    chip.onclick = (e) => {
+      if (didLongPress) {
+        e.preventDefault();
+        return;
+      }
+      onAdd(chip.dataset.addtag);
+    };
+  });
+}
+
 function openMovieEditor(movie) {
   const isEdit = !!movie;
   const draft = movie
@@ -1154,17 +1285,9 @@ function openMovieEditor(movie) {
 
     <label class="form-field">
       <span class="form-label">Hashtags &amp; Categories</span>
-      <input type="text" id="movieTags" placeholder="#комедия #драма #боевик #sci-fi..." maxlength="200" value="${esc(draft.tags)}">
-      <div class="tag-suggest-chips" id="tagSuggestChips">
-        <button type="button" class="tag-suggest-chip" data-addtag="#комедия">+ #комедия</button>
-        <button type="button" class="tag-suggest-chip" data-addtag="#фантастика">+ #фантастика</button>
-        <button type="button" class="tag-suggest-chip" data-addtag="#боевик">+ #боевик</button>
-        <button type="button" class="tag-suggest-chip" data-addtag="#драма">+ #драма</button>
-        <button type="button" class="tag-suggest-chip" data-addtag="#триллер">+ #триллер</button>
-        <button type="button" class="tag-suggest-chip" data-addtag="#ужасы">+ #ужасы</button>
-        <button type="button" class="tag-suggest-chip" data-addtag="#мультфильм">+ #мультфильм</button>
-        <button type="button" class="tag-suggest-chip" data-addtag="#семейный">+ #семейный</button>
-      </div>
+      <input type="text" id="movieTags" placeholder="#action #comedy #drama #sci-fi..." maxlength="200" value="${esc(draft.tags)}">
+      <div class="tag-suggest-chips" id="tagSuggestChips"></div>
+      <button type="button" class="btn" id="addCustomTagBtn" style="margin-top:8px; height:32px; font-size:12px;">+ Add custom tag</button>
     </label>
 
     <label class="form-field">
@@ -1351,17 +1474,68 @@ function openMovieEditor(movie) {
   });
 
   // Quick tag chips in editor
-  s.querySelectorAll('[data-addtag]').forEach((chip) => {
-    chip.onclick = () => {
-      const add = chip.dataset.addtag;
-      const current = $('#movieTags').value.trim();
-      if (!current.toLowerCase().includes(add.toLowerCase())) {
-        $('#movieTags').value = current ? `${current} ${add}` : add;
-        draft.tags = $('#movieTags').value;
-        haptic('light');
+  const addTagToInput = (tag) => {
+    const input = $('#movieTags');
+    if (!input) return;
+    const current = input.value.trim();
+    const existingTags = current.split(/\s+/).map((t) => t.toLowerCase());
+    if (!existingTags.includes(tag.toLowerCase())) {
+      input.value = current ? `${current} ${tag}` : tag;
+      draft.tags = input.value;
+      haptic('light');
+    }
+  };
+
+  const chipsContainer = s.querySelector('#tagSuggestChips');
+  const refreshChips = () => {
+    renderTagChips(
+      chipsContainer,
+      addTagToInput,
+      state.customTags,
+      async (tagToDelete) => {
+        const ok = await confirmSheet({
+          title: 'Remove Tag',
+          message: `Remove preset "${tagToDelete}"?`,
+          confirmText: 'Remove',
+        });
+        if (ok) {
+          const next = state.customTags.filter((t) => t.toLowerCase() !== tagToDelete.toLowerCase());
+          await saveCustomTags(next);
+          haptic('medium');
+          refreshChips();
+        }
       }
-    };
-  });
+    );
+  };
+  refreshChips();
+
+  s.querySelector('#addCustomTagBtn').onclick = async () => {
+    const raw = await promptSheet({
+      title: 'New tag',
+      message: 'Name without # (e.g. "date_night")',
+      placeholder: 'tag_name',
+    });
+    if (!raw) return;
+    const cleaned =
+      '#' +
+      String(raw)
+        .trim()
+        .toLowerCase()
+        .replace(/[^\wа-яё-]/gi, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_|_$/g, '');
+    if (cleaned === '#') return;
+
+    if (!state.customTags.includes(cleaned)) {
+      const next = [...state.customTags, cleaned];
+      await saveCustomTags(next);
+      addTagToInput(cleaned);
+      haptic('light');
+      refreshChips();
+    } else {
+      addTagToInput(cleaned);
+    }
+  };
 
   // Save movie
   $('#saveMovieBtn').onclick = async () => {

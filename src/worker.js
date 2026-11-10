@@ -227,10 +227,53 @@ async function handleApi(request, env, url, path, method) {
         display_name: fullUser.display_name || fullUser.custom_name || fullUser.first_name || 'You',
         avatar_url: fullUser.avatar_url || null,
         accent: fullUser.accent || null,
+        custom_tags: (() => {
+          try {
+            const arr = JSON.parse(fullUser.custom_tags || '[]');
+            return Array.isArray(arr) ? arr : [];
+          } catch {
+            return [];
+          }
+        })(),
       },
       parties,
       invite_base: inviteBase,
     });
+  }
+
+  // GET /api/me/custom-tags
+  if (path === '/api/me/custom-tags' && method === 'GET') {
+    const row = await env.DB.prepare(
+      'SELECT custom_tags FROM users WHERE id = ?'
+    ).bind(user.id).first();
+    let tags = [];
+    try {
+      tags = JSON.parse(row?.custom_tags || '[]');
+    } catch {}
+    if (!Array.isArray(tags)) tags = [];
+    return json({ tags });
+  }
+
+  // PATCH /api/me/custom-tags
+  if (path === '/api/me/custom-tags' && method === 'PATCH') {
+    const body = await request.json().catch(() => ({}));
+    const raw = Array.isArray(body.tags) ? body.tags : [];
+    const normalized = [];
+    const seen = new Set();
+    for (const t of raw) {
+      const s = String(t || '').trim().toLowerCase();
+      if (!s) continue;
+      const tag = s.startsWith('#') ? s : '#' + s;
+      if (!/^#[\wа-яё-]{1,40}$/i.test(tag)) continue;
+      if (seen.has(tag)) continue;
+      seen.add(tag);
+      normalized.push(tag);
+      if (normalized.length >= 50) break;
+    }
+    await env.DB.prepare(
+      'UPDATE users SET custom_tags = ? WHERE id = ?'
+    ).bind(JSON.stringify(normalized), user.id).run();
+    return json({ tags: normalized });
   }
 
   // PATCH /api/me/profile

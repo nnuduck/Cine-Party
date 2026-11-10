@@ -4,3 +4,9 @@ node_modules
 .dev.vars.*
 backups
 *.log
+
+# Local backups and import artifacts (do not commit)
+backup_*.sql
+scripts/hdrezka.txt
+scripts/import_hdrezka.sql
+scripts/tmdb_cache.json
