@@ -340,6 +340,9 @@ function openSheet(contentHtml) {
 }
 
 function closeSheet() {
+  if (activePosterViewer) {
+    closePosterViewer();
+  }
   if (currentOverlay) {
     currentOverlay.remove();
     currentOverlay = null;
@@ -1080,6 +1083,15 @@ function openMovieDetail(movieId) {
     };
   });
 
+  const posterImg = s.querySelector('.detail-poster-wrap img');
+  if (posterImg && m.poster) {
+    posterImg.classList.add('detail-poster-clickable');
+    posterImg.style.cursor = 'pointer';
+    posterImg.onclick = () => {
+      openPosterViewer(m.poster, m.title);
+    };
+  }
+
   if (!canEdit) return;
 
   s.querySelector('#toggleWatchBtn').onclick = async () => {
@@ -1116,6 +1128,289 @@ function openMovieDetail(movieId) {
       toast(e.message);
     }
   };
+}
+
+// ---------- Fullscreen Poster Viewer ----------
+let activePosterViewer = null;
+
+function openPosterViewer(imageUrl, title) {
+  if (!imageUrl || activePosterViewer) return;
+  haptic('light');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'poster-viewer-overlay';
+  overlay.innerHTML = `
+    <img class="poster-viewer-img" src="${esc(imageUrl)}" alt="${esc(title || '')}" draggable="false">
+    <button type="button" class="poster-viewer-close" aria-label="Close">
+      <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  `;
+  document.body.appendChild(overlay);
+  activePosterViewer = overlay;
+
+  // Prevent body scroll while viewer is open
+  const prevBodyOverflow = document.body.style.overflow;
+  document.body.style.overflow = 'hidden';
+
+  // Telegram BackButton lifecycle
+  if (tg?.BackButton) {
+    try {
+      if (backButtonBound) {
+        tg.BackButton.offClick(closeSheet);
+        backButtonBound = false;
+      }
+      tg.BackButton.show();
+      tg.BackButton.onClick(closePosterViewer);
+    } catch {}
+  }
+
+  // Keyboard escape for desktop testing
+  const onKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      closePosterViewer();
+    }
+  };
+  window.addEventListener('keydown', onKeyDown);
+
+  const img = overlay.querySelector('.poster-viewer-img');
+  const closeBtn = overlay.querySelector('.poster-viewer-close');
+
+  // Zoom and touch state
+  let scale = 1;
+  let translateX = 0;
+  let translateY = 0;
+  let startDist = 0;
+  let startScale = 1;
+  let startX = 0;
+  let startY = 0;
+  let touchStartX = 0;
+  let touchStartY = 0;
+  let baseTranslateX = 0;
+  let baseTranslateY = 0;
+  let swipeStartY = 0;
+  let isSwiping = false;
+  let isPinching = false;
+  let hasMoved = false;
+  let lastTapTime = 0;
+
+  const clampScale = (s) => Math.min(4, Math.max(1, s));
+
+  const clampPan = () => {
+    if (scale <= 1) {
+      translateX = 0;
+      translateY = 0;
+      return;
+    }
+    const maxX = Math.max(0, (img.offsetWidth * scale - window.innerWidth) / 2 + 30);
+    const maxY = Math.max(0, (img.offsetHeight * scale - window.innerHeight) / 2 + 30);
+    translateX = Math.max(-maxX, Math.min(maxX, translateX));
+    translateY = Math.max(-maxY, Math.min(maxY, translateY));
+  };
+
+  const applyTransform = (animate = true) => {
+    img.classList.toggle('zooming', !animate);
+    img.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+  };
+
+  const resetTransform = (animate = true) => {
+    scale = 1;
+    translateX = 0;
+    translateY = 0;
+    applyTransform(animate);
+  };
+
+  const distance = (t1, t2) => {
+    const dx = t1.clientX - t2.clientX;
+    const dy = t1.clientY - t2.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  // Pinch-to-zoom + pan when zoomed + swipe down when scale=1
+  overlay.addEventListener(
+    'touchstart',
+    (e) => {
+      if (e.target.closest('.poster-viewer-close')) return;
+      hasMoved = false;
+      if (e.touches.length === 2) {
+        isPinching = true;
+        isSwiping = false;
+        startDist = distance(e.touches[0], e.touches[1]);
+        startScale = scale;
+        startX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        startY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        baseTranslateX = translateX;
+        baseTranslateY = translateY;
+      } else if (e.touches.length === 1) {
+        isPinching = false;
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+        swipeStartY = e.touches[0].clientY;
+        baseTranslateX = translateX;
+        baseTranslateY = translateY;
+        if (scale > 1) {
+          startX = e.touches[0].clientX;
+          startY = e.touches[0].clientY;
+        } else {
+          isSwiping = true;
+          overlay.style.transition = 'none';
+        }
+      }
+    },
+    { passive: true }
+  );
+
+  overlay.addEventListener(
+    'touchmove',
+    (e) => {
+      if (e.target.closest('.poster-viewer-close')) return;
+      if (e.touches.length === 2 && startDist > 0) {
+        if (e.cancelable) e.preventDefault();
+        hasMoved = true;
+        const dist = distance(e.touches[0], e.touches[1]);
+        scale = clampScale(startScale * (dist / startDist));
+        clampPan();
+        applyTransform(false);
+      } else if (e.touches.length === 1) {
+        const moveDist = Math.hypot(e.touches[0].clientX - touchStartX, e.touches[0].clientY - touchStartY);
+        if (moveDist > 8) hasMoved = true;
+        if (scale > 1) {
+          if (e.cancelable) e.preventDefault();
+          const dx = e.touches[0].clientX - startX;
+          const dy = e.touches[0].clientY - startY;
+          translateX = baseTranslateX + dx;
+          translateY = baseTranslateY + dy;
+          clampPan();
+          applyTransform(false);
+        } else if (isSwiping && scale === 1) {
+          const dy = e.touches[0].clientY - swipeStartY;
+          if (dy > 0) {
+            if (e.cancelable) e.preventDefault();
+            overlay.style.transform = `translateY(${dy * 0.6}px)`;
+            overlay.style.opacity = String(Math.max(0.4, 1 - dy / 500));
+          }
+        }
+      }
+    },
+    { passive: false }
+  );
+
+  overlay.addEventListener(
+    'touchend',
+    (e) => {
+      if (e.target.closest('.poster-viewer-close')) return;
+      if (isPinching && e.touches.length < 2) {
+        isPinching = false;
+        if (scale < 1.05) {
+          resetTransform(true);
+        } else {
+          clampPan();
+          applyTransform(true);
+        }
+        if (e.touches.length === 1) {
+          touchStartX = e.touches[0].clientX;
+          touchStartY = e.touches[0].clientY;
+          startX = e.touches[0].clientX;
+          startY = e.touches[0].clientY;
+          baseTranslateX = translateX;
+          baseTranslateY = translateY;
+          isSwiping = scale <= 1;
+          swipeStartY = e.touches[0].clientY;
+        }
+      } else if (isSwiping && scale === 1 && e.touches.length === 0) {
+        const endY = e.changedTouches[0]?.clientY || 0;
+        const dy = endY - swipeStartY;
+        if (dy > 100) {
+          closePosterViewer();
+          return;
+        }
+        overlay.style.transition = 'transform 0.2s ease-out, opacity 0.2s ease-out';
+        overlay.style.transform = '';
+        overlay.style.opacity = '1';
+        setTimeout(() => {
+          if (overlay.parentNode) overlay.style.transition = '';
+        }, 220);
+        isSwiping = false;
+      }
+      if (e.touches.length === 0) {
+        setTimeout(() => {
+          hasMoved = false;
+        }, 120);
+      }
+    },
+    { passive: true }
+  );
+
+  // Double-tap to toggle zoom (centered at tap point if available)
+  img.addEventListener('click', (e) => {
+    if (hasMoved) return;
+    const now = Date.now();
+    if (now - lastTapTime < 320) {
+      haptic('light');
+      if (scale > 1) {
+        resetTransform(true);
+      } else {
+        scale = 2.5;
+        if (e.clientX || e.clientY) {
+          const cx = window.innerWidth / 2;
+          const cy = window.innerHeight / 2;
+          translateX = (cx - e.clientX) * 1.5;
+          translateY = (cy - e.clientY) * 1.5;
+        } else {
+          translateX = 0;
+          translateY = 0;
+        }
+        clampPan();
+        applyTransform(true);
+      }
+      lastTapTime = 0;
+    } else {
+      lastTapTime = now;
+    }
+  });
+
+  closeBtn.addEventListener('click', closePosterViewer);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay && !hasMoved) closePosterViewer();
+  });
+
+  // Save cleanup state
+  overlay._prevBodyOverflow = prevBodyOverflow;
+  overlay._onKeyDown = onKeyDown;
+}
+
+function closePosterViewer() {
+  if (!activePosterViewer) return;
+  haptic('light');
+
+  const overlay = activePosterViewer;
+  activePosterViewer = null;
+
+  if (overlay._onKeyDown) {
+    window.removeEventListener('keydown', overlay._onKeyDown);
+  }
+
+  // Restore BackButton lifecycle
+  if (tg?.BackButton) {
+    try {
+      tg.BackButton.offClick(closePosterViewer);
+      if (currentOverlay) {
+        if (!backButtonBound) {
+          tg.BackButton.onClick(closeSheet);
+          backButtonBound = true;
+        }
+        tg.BackButton.show();
+      } else {
+        tg.BackButton.hide();
+      }
+    } catch {}
+  }
+
+  document.body.style.overflow = overlay._prevBodyOverflow || '';
+
+  overlay.classList.add('closing');
+  setTimeout(() => {
+    if (overlay.parentNode) overlay.remove();
+  }, 200);
 }
 
 // ---------- Movie Editor (Add / Edit) ----------
