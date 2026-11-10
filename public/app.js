@@ -15,6 +15,21 @@ if (tg) {
   } catch {}
 }
 
+function updateSafeArea() {
+  if (tg) {
+    const topInset = tg.contentSafeAreaInset?.top || tg.safeAreaInset?.top || 0;
+    if (topInset > 0) {
+      document.documentElement.style.setProperty('--tg-content-safe-area-inset-top', `${topInset}px`);
+    }
+    const bottomInset = tg.contentSafeAreaInset?.bottom || tg.safeAreaInset?.bottom || 0;
+    if (bottomInset > 0) {
+      document.documentElement.style.setProperty('--tg-content-safe-area-inset-bottom', `${bottomInset}px`);
+    }
+  }
+}
+updateSafeArea();
+try { tg?.onEvent?.('fullscreenChanged', updateSafeArea); } catch {}
+
 const $app = document.getElementById('app');
 
 function esc(str) {
@@ -114,8 +129,19 @@ function openAddToHomeGuideSheet() {
       </div>
     </div>
 
-    <button type="button" class="btn primary" id="gotItGuideBtn">Got It</button>
+    <div class="action-stack" style="justify-content:center;">
+      <button type="button" class="btn primary" id="openDirectBotLinkBtn">Open via t.me/cine_party_bot/cinema</button>
+      <button type="button" class="btn" id="gotItGuideBtn">Close</button>
+    </div>
   `);
+
+  document.querySelector('#openDirectBotLinkBtn')?.addEventListener('click', () => {
+    if (tg?.openTelegramLink) {
+      tg.openTelegramLink('https://t.me/cine_party_bot/cinema');
+    } else {
+      window.open('https://t.me/cine_party_bot/cinema', '_blank');
+    }
+  });
 
   document.querySelector('#gotItGuideBtn')?.addEventListener('click', closeSheet);
 }
@@ -169,10 +195,20 @@ function getContrastColor(hex) {
   return luminance > 0.6 ? '#000000' : '#FFFFFF';
 }
 
+function hexToRgba(hex, alpha = 0.35) {
+  if (!hex || hex.length !== 7) return `rgba(215, 25, 33, ${alpha})`;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function applyAccent(color, saveToServer = false) {
   const hex = color && /^#[0-9A-Fa-f]{6}$/.test(color) ? color : DEFAULT_ACCENT;
   document.documentElement.style.setProperty('--accent', hex);
   document.documentElement.style.setProperty('--accent-contrast', getContrastColor(hex));
+  document.documentElement.style.setProperty('--accent-glow', hexToRgba(hex, 0.35));
+  document.documentElement.style.setProperty('--accent-glow-strong', hexToRgba(hex, 0.5));
   localStorage.setItem('cinema_accent', hex);
 
   if (saveToServer && state.me) {
@@ -275,10 +311,25 @@ function parseTags(raw) {
     .map((t) => (t.startsWith('#') ? t.toLowerCase() : `#${t.toLowerCase()}`));
 }
 
+function tabMovies() {
+  const myId = state.me?.id;
+  return state.movies.filter((m) => {
+    if (m.status !== state.status) return false;
+    if (state.tab === 'together') return m.kind === 'together';
+    if (state.tab === 'mine') {
+      if (state.status === 'watched') {
+        return (m.kind === 'personal' && m.added_by === myId) || m.kind === 'together';
+      }
+      return m.kind === 'personal' && m.added_by === myId;
+    }
+    return m.kind === 'personal' && m.added_by !== myId;
+  });
+}
+
 function partyTags() {
   const counts = new Map();
-  for (const m of state.movies) {
-    if (m.status !== state.status) continue;
+  const candidates = tabMovies();
+  for (const m of candidates) {
     const tags = parseTags(m.tags);
     for (const t of tags) {
       counts.set(t, (counts.get(t) || 0) + 1);
@@ -333,22 +384,10 @@ async function refreshAll() {
 
 // ---------- UI Rendering ----------
 function visibleMovies() {
-  const myId = state.me?.id;
   const sq = (state.searchQuery || '').trim().toLowerCase();
   const selectedTag = state.selectedTag ? state.selectedTag.toLowerCase() : null;
 
-  return state.movies.filter((m) => {
-    if (m.status !== state.status) return false;
-    if (state.tab === 'together' && m.kind !== 'together') return false;
-    if (state.tab === 'mine') {
-      if (state.status === 'watched') {
-        // Movies marked watched together also appear in personal Watched list
-        return (m.kind === 'personal' && m.added_by === myId) || m.kind === 'together';
-      }
-      return m.kind === 'personal' && m.added_by === myId;
-    }
-    if (state.tab === 'others' && !(m.kind === 'personal' && m.added_by !== myId)) return false;
-
+  return tabMovies().filter((m) => {
     if (selectedTag) {
       const mTags = parseTags(m.tags);
       if (!mTags.includes(selectedTag)) return false;
@@ -518,6 +557,10 @@ function bindFilterEvents() {
 function switchTab(newTab) {
   if (state.tab === newTab) return;
   state.tab = newTab;
+  const availableTags = partyTags().map(([t]) => t);
+  if (state.selectedTag && !availableTags.includes(state.selectedTag)) {
+    state.selectedTag = null;
+  }
   render();
 }
 
@@ -563,24 +606,12 @@ function render() {
 
   $app.innerHTML = `
     <div class="screen">
-      <header class="topbar">
-        <button class="pill-tablet party-pill" id="partySelectBtn" aria-label="Select Party">
-          <svg class="pill-icon-svg" viewBox="0 0 24 24">
-            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-            <circle cx="9" cy="7" r="4"></circle>
-            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-          </svg>
-          <span class="pill-label">${esc(p.name)}</span>
-          <span class="pill-count-badge">· ${membersCount}</span>
-          <svg class="pill-chevron-svg" viewBox="0 0 24 24">
-            <polyline points="6 9 12 15 18 9"></polyline>
-          </svg>
-        </button>
-
-        <button class="pill-tablet profile-pill" id="profileBtn" aria-label="Profile">
-          <div class="pill-avatar-circle">${userAvatarHtml}</div>
-          <span class="pill-label">${esc(state.me?.display_name || state.me?.first_name || 'Profile')}</span>
+      <header class="top-brand-bar">
+        <div class="brand-title display">Cine Party</div>
+        <button type="button" class="brand-room-pill" id="topPartyChip" aria-label="Room details">
+          <span class="room-dot"></span>
+          <span class="room-name">${esc(p.name)}</span>
+          <span class="room-count">· ${membersCount}</span>
         </button>
       </header>
 
@@ -616,27 +647,60 @@ function render() {
       </div>
     </div>
 
-    ${
-      state.tab !== 'others'
-        ? `
-          <button class="fab" id="fabBtn" aria-label="Add Movie">
-            <svg viewBox="0 0 24 24">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-          </button>
-        `
-        : ''
-    }
+    <nav class="liquid-dock" id="bottomDock">
+      <button type="button" class="dock-item" id="dockParty" aria-label="Room &amp; Members">
+        <svg viewBox="0 0 24 24">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+          <circle cx="9" cy="7" r="4"></circle>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+        </svg>
+        <span class="dock-item-label">${esc(p.name)}</span>
+      </button>
+
+      <button type="button" class="dock-item active" id="dockMovies" aria-label="Movies">
+        <svg viewBox="0 0 24 24">
+          <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect>
+          <line x1="7" y1="2" x2="7" y2="22"></line>
+          <line x1="17" y1="2" x2="17" y2="22"></line>
+          <line x1="2" y1="12" x2="22" y2="12"></line>
+          <line x1="2" y1="7" x2="7" y2="7"></line>
+          <line x1="2" y1="17" x2="7" y2="17"></line>
+          <line x1="17" y1="17" x2="22" y2="17"></line>
+          <line x1="17" y1="7" x2="22" y2="7"></line>
+        </svg>
+        <span class="dock-item-label">Movies</span>
+      </button>
+
+      <button type="button" class="dock-item dock-add-btn" id="dockAdd" aria-label="Add Movie">
+        <div class="dock-add-circle">
+          <svg viewBox="0 0 24 24">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </div>
+        <span class="dock-item-label">Add</span>
+      </button>
+
+      <button type="button" class="dock-item" id="dockProfile" aria-label="Profile">
+        <div class="dock-avatar">${userAvatarHtml}</div>
+        <span class="dock-item-label">${esc(state.me?.custom_name || state.me?.first_name || 'Profile')}</span>
+      </button>
+    </nav>
   `;
 
-  $app.querySelector('#partySelectBtn').onclick = openPartySheet;
-  $app.querySelector('#profileBtn').onclick = openProfileSheet;
-  bindFilterEvents();
-  $app.querySelector('#fabBtn')?.addEventListener('click', () => {
+  $app.querySelector('#topPartyChip').onclick = openPartySheet;
+  $app.querySelector('#dockParty').onclick = openPartySheet;
+  $app.querySelector('#dockMovies').onclick = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    haptic('light');
+  };
+  $app.querySelector('#dockAdd').onclick = () => {
     haptic('medium');
     openMovieEditor();
-  });
+  };
+  $app.querySelector('#dockProfile').onclick = openProfileSheet;
+  bindFilterEvents();
 
   $app.querySelectorAll('[data-tab]').forEach((b) => {
     b.onclick = () => {
@@ -1367,6 +1431,14 @@ function openProfileSheet() {
       <button type="button" class="btn" id="resetAccentBtn">Reset Accent</button>
     </div>
 
+    <div class="section-divider"></div>
+    <div class="form-label" style="margin-bottom:12px;">Quick Access</div>
+    <div style="margin-bottom:14px;">
+      <button type="button" class="btn" id="profileAddToHomeBtn">
+        <svg class="btn-icon-svg" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg> Add to Home Screen
+      </button>
+    </div>
+
     ${
       p
         ? `
@@ -1455,6 +1527,8 @@ function openProfileSheet() {
     haptic('medium');
     toast('Accent reset to default');
   };
+
+  s.querySelector('#profileAddToHomeBtn')?.addEventListener('click', requestAddToHomeScreen);
 
   if (p) {
     s.querySelector('#savePartyRenameBtn').onclick = async () => {
