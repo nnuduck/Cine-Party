@@ -58,7 +58,7 @@ button {
   padding-top: var(--tg-total-top-inset, max(calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px) + 16px), calc(env(safe-area-inset-top, 0px) + 64px), 96px));
   padding-left: 16px;
   padding-right: 16px;
-  padding-bottom: calc(var(--safe-bottom) + 96px);
+  padding-bottom: calc(var(--tg-content-safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + 96px);
   max-width: 640px;
   margin: 0 auto;
 }
@@ -740,7 +740,10 @@ button {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding: 16px 14px calc(var(--safe-bottom) + 14px);
+  padding:
+    var(--tg-total-top-inset, 96px)
+    14px
+    calc(var(--tg-content-safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + 14px);
   animation: overlayFadeIn 0.22s var(--ease-smooth);
   box-sizing: border-box;
   overflow-y: auto;
@@ -759,7 +762,10 @@ button {
   -webkit-backdrop-filter: blur(28px);
   width: 100%;
   max-width: 500px;
-  max-height: calc(100vh - var(--safe-top) - var(--safe-bottom) - 36px);
+  max-height: calc(100vh 
+    - var(--tg-total-top-inset, 96px) 
+    - var(--tg-content-safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) 
+    - 14px);
   overflow-y: auto;
   overscroll-behavior: contain;
   border-radius: 28px;
@@ -767,7 +773,6 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.14);
   box-shadow: 0 28px 70px rgba(0, 0, 0, 0.9), inset 0 1px 1px 0 rgba(255, 255, 255, 0.22);
   animation: cardSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: transform, opacity;
   box-sizing: border-box;
   margin: auto 0 0;
 }

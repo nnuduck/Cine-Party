@@ -16,25 +16,44 @@ if (tg) {
 }
 
 function updateSafeArea() {
-  if (tg) {
-    const sTop = tg.safeAreaInset?.top || 0;
-    const cTop = tg.contentSafeAreaInset?.top || 0;
-    const sBottom = tg.safeAreaInset?.bottom || 0;
-    const cBottom = tg.contentSafeAreaInset?.bottom || 0;
+  const root = document.documentElement;
 
-    const totalTop = sTop + cTop;
-    const totalBottom = Math.max(sBottom, cBottom);
-
-    if (sTop > 0) document.documentElement.style.setProperty('--tg-safe-area-inset-top', `${sTop}px`);
-    if (cTop > 0) document.documentElement.style.setProperty('--tg-content-safe-area-inset-top', `${cTop}px`);
-    if (totalBottom > 0) document.documentElement.style.setProperty('--tg-content-safe-area-inset-bottom', `${totalBottom}px`);
-
-    // Minimum 96px to comfortably clear Telegram's native Close/Menu buttons and phone status bar
-    const resolvedTop = Math.max(totalTop + 12, 96);
-    document.documentElement.style.setProperty('--tg-total-top-inset', `${resolvedTop}px`);
-  } else {
-    document.documentElement.style.setProperty('--tg-total-top-inset', '24px');
+  if (!tg) {
+    root.style.setProperty('--tg-safe-area-inset-top', '0px');
+    root.style.setProperty('--tg-content-safe-area-inset-top', '0px');
+    root.style.setProperty('--tg-content-safe-area-inset-bottom', '0px');
+    root.style.setProperty('--tg-total-top-inset', '24px');
+    return;
   }
+
+  const sTop = Number(tg.safeAreaInset?.top) || 0;
+  const cTop = Number(tg.contentSafeAreaInset?.top) || 0;
+  const sBottom = Number(tg.safeAreaInset?.bottom) || 0;
+  const cBottom = Number(tg.contentSafeAreaInset?.bottom) || 0;
+
+  // ВСЕГДА ставим переменные, даже если 0
+  root.style.setProperty('--tg-safe-area-inset-top', `${sTop}px`);
+  root.style.setProperty('--tg-content-safe-area-inset-top', `${cTop}px`);
+  root.style.setProperty('--tg-content-safe-area-inset-bottom', `${Math.max(sBottom, cBottom)}px`);
+
+  // Если contentSafeAreaInset.top = 0 во фуллскрине — резервируем зону под нативные кнопки
+  const fullscreenChrome = tg.isFullscreen ? 88 : 0;
+  const chrome = Math.max(cTop, fullscreenChrome);
+  const resolvedTop = Math.max(sTop + chrome + 16, 72);
+
+  root.style.setProperty('--tg-total-top-inset', `${resolvedTop}px`);
+
+  // ВРЕМЕННЫЙ лог для проверки на устройстве — не удалять до подтверждения
+  console.log('[SafeArea]', {
+    sTop,
+    cTop,
+    sBottom,
+    cBottom,
+    isFullscreen: !!tg.isFullscreen,
+    viewportHeight: tg.viewportHeight,
+    viewportStableHeight: tg.viewportStableHeight,
+    resolvedTop,
+  });
 }
 updateSafeArea();
 try { tg?.onEvent?.('safeAreaChanged', updateSafeArea); } catch {}
@@ -263,6 +282,7 @@ async function api(path, { method = 'GET', body } = {}) {
 
 // ---------- Bottom Sheet Helpers ----------
 let currentOverlay = null;
+let backButtonBound = false;
 
 function openSheet(contentHtml) {
   closeSheet();
@@ -279,7 +299,10 @@ function openSheet(contentHtml) {
 
   if (tg?.BackButton) {
     tg.BackButton.show();
-    tg.BackButton.onClick(closeSheet);
+    if (!backButtonBound) {
+      tg.BackButton.onClick(closeSheet);
+      backButtonBound = true;
+    }
   }
   return overlay.querySelector('.sheet');
 }
@@ -291,7 +314,38 @@ function closeSheet() {
   }
   if (tg?.BackButton) {
     tg.BackButton.hide();
+    if (backButtonBound) {
+      tg.BackButton.offClick(closeSheet);
+      backButtonBound = false;
+    }
   }
+}
+
+function confirmSheet({ title, message, confirmText = 'Delete', cancelText = 'Cancel' }) {
+  return new Promise((resolve) => {
+    const s = openSheet(`
+      <h2 class="sheet-title display">${esc(title)}</h2>
+      <div style="color:var(--muted); font-size:14px; line-height:1.5; margin-bottom:20px;">
+        ${esc(message)}
+      </div>
+      <div class="action-stack" style="justify-content:center;">
+        <button type="button" class="btn danger" id="confirmYes">${esc(confirmText)}</button>
+        <button type="button" class="btn" id="confirmNo">${esc(cancelText)}</button>
+      </div>
+    `);
+    let resolved = false;
+    const finish = (val) => {
+      if (resolved) return;
+      resolved = true;
+      closeSheet();
+      resolve(val);
+    };
+    s.querySelector('#confirmYes').onclick = () => finish(true);
+    s.querySelector('#confirmNo').onclick = () => finish(false);
+    s.closest('.overlay')?.addEventListener('click', (e) => {
+      if (e.target.classList.contains('overlay')) finish(false);
+    });
+  });
 }
 
 // ---------- Application State ----------
@@ -310,18 +364,26 @@ const state = {
 
 function parseTags(raw) {
   if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  const matches = String(raw).match(/#[a-zA-Z0-9а-яА-ЯёЁ_-]+/g);
+  if (Array.isArray(raw)) {
+    const set = new Set();
+    for (const t of raw) {
+      const s = String(t || '').trim().toLowerCase();
+      if (s) set.add(s.startsWith('#') ? s : '#' + s);
+    }
+    return Array.from(set);
+  }
+  const str = String(raw);
+  const matches = str.match(/#[a-zA-Z0-9а-яА-ЯёЁ_-]+/g);
   if (matches) {
     const set = new Set();
     matches.forEach((t) => set.add(t.toLowerCase()));
     return Array.from(set);
   }
-  return String(raw)
+  return str
     .split(/[\s,]+/)
-    .map((t) => t.trim())
+    .map((t) => t.trim().toLowerCase())
     .filter(Boolean)
-    .map((t) => (t.startsWith('#') ? t.toLowerCase() : `#${t.toLowerCase()}`));
+    .map((t) => (t.startsWith('#') ? t : `#${t}`));
 }
 
 function tabMovies() {
@@ -410,7 +472,7 @@ function visibleMovies() {
       const titleMatch = (m.title || '').toLowerCase().includes(sq);
       const noteMatch = (m.note || '').toLowerCase().includes(sq);
       const tagsMatch = (m.tags || '').toLowerCase().includes(sq);
-      const yearMatch = (m.year || '').includes(sq);
+      const yearMatch = String(m.year || '').includes(sq);
       if (!titleMatch && !noteMatch && !tagsMatch && !yearMatch) return false;
     }
 
@@ -429,7 +491,7 @@ function renderCard(m) {
       : '';
 
   const posterHtml = m.poster
-    ? `<img src="${esc(m.poster)}" alt="${esc(m.title)}" loading="lazy" onerror="this.onerror=null;this.parentElement.innerHTML='<div class=\\'poster-ph\\'>${esc(m.title)}</div>'">`
+    ? `<img src="${esc(m.poster)}" alt="${esc(m.title)}" loading="lazy" onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('div'),{className:'poster-ph',textContent:'${esc(m.title)}'}))">`
     : `<div class="poster-ph">${esc(m.title)}</div>`;
 
   let meta = '';
@@ -472,6 +534,26 @@ function emptyMessage() {
   return `${esc(otherMemberName())} has not added any personal movies yet.`;
 }
 
+function emptyStateHtml() {
+  return `
+    <div class="empty-box">
+      <div class="dotted-illustration">
+        <span></span><span></span><span></span><span></span>
+        <span></span><span class="active"></span><span></span><span></span>
+        <span></span><span></span><span class="active"></span><span></span>
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <div class="empty-text">${emptyMessage()}</div>
+    </div>
+  `;
+}
+
+function createCardEl(m) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = renderCard(m).trim();
+  return tpl.content.firstElementChild;
+}
+
 let filterSearchTimer = null;
 
 function refreshMoviesContainer() {
@@ -479,34 +561,59 @@ function refreshMoviesContainer() {
   if (!container) return;
   const list = visibleMovies();
 
-  // Avoid unnecessary re-render if card IDs and order didn't change
-  const currentCards = container.querySelectorAll('.card');
-  const currentIds = Array.from(currentCards).map((c) => Number(c.dataset.id));
-  const newIds = list.map((m) => m.id);
-  if (currentIds.length === newIds.length && currentIds.every((id, i) => id === newIds[i])) {
+  // Empty state
+  if (list.length === 0) {
+    if (!container.querySelector('.empty-box')) {
+      container.innerHTML = emptyStateHtml();
+    } else {
+      const txt = container.querySelector('.empty-text');
+      if (txt) txt.textContent = emptyMessage();
+    }
     return;
   }
 
-  container.innerHTML = list.length
-    ? `<div class="grid">${list.map(renderCard).join('')}</div>`
-    : `
-      <div class="empty-box">
-        <div class="dotted-illustration">
-          <span></span><span></span><span></span><span></span>
-          <span></span><span class="active"></span><span></span><span></span>
-          <span></span><span></span><span class="active"></span><span></span>
-          <span></span><span></span><span></span><span></span>
-        </div>
-        <div class="empty-text">${emptyMessage()}</div>
-      </div>
-    `;
-
-  container.querySelectorAll('.card').forEach((c) => {
-    c.onclick = () => {
+  // Ensure grid exists
+  let grid = container.querySelector('.grid');
+  if (!grid) {
+    container.innerHTML = '<div class="grid"></div>';
+    grid = container.querySelector('.grid');
+    // Delegated click — ОДИН раз на grid
+    grid.addEventListener('click', (e) => {
+      const card = e.target.closest('.card');
+      if (!card) return;
       haptic('light');
-      openMovieDetail(Number(c.dataset.id));
-    };
+      openMovieDetail(Number(card.dataset.id));
+    });
+  }
+
+  const wantedIds = new Set(list.map((m) => m.id));
+
+  // Remove cards not in list
+  grid.querySelectorAll('.card').forEach((card) => {
+    if (!wantedIds.has(Number(card.dataset.id))) card.remove();
   });
+
+  // Build lookup of existing cards
+  const existing = new Map();
+  grid.querySelectorAll('.card').forEach((c) => existing.set(Number(c.dataset.id), c));
+
+  // Insert/reorder in place
+  list.forEach((m, index) => {
+    let card = existing.get(m.id);
+    if (!card) {
+      card = createCardEl(m);
+      existing.set(m.id, card);
+    }
+    const current = grid.children[index];
+    if (current !== card) {
+      grid.insertBefore(card, current || null);
+    }
+  });
+
+  // Remove any extra trailing cards (safety)
+  while (grid.children.length > list.length) {
+    grid.lastElementChild.remove();
+  }
 }
 
 function renderFilterSection() {
@@ -552,7 +659,7 @@ function bindFilterEvents() {
       state.searchQuery = e.target.value;
       if (clearBtn) clearBtn.style.display = state.searchQuery ? 'grid' : 'none';
       clearTimeout(filterSearchTimer);
-      filterSearchTimer = setTimeout(refreshMoviesContainer, 100);
+      filterSearchTimer = setTimeout(refreshMoviesContainer, 320);
     };
   }
 
@@ -601,6 +708,8 @@ function switchStatus(newStatus) {
 }
 
 function render() {
+  const scrollY = window.scrollY;
+
   if (state.loading) {
     $app.innerHTML = '<div class="spinner">Loading...</div>';
     return;
@@ -721,12 +830,9 @@ function render() {
     };
   });
 
-  $app.querySelectorAll('.card').forEach((c) => {
-    c.onclick = () => {
-      haptic('light');
-      openMovieDetail(Number(c.dataset.id));
-    };
-  });
+  if (scrollY > 0) {
+    window.scrollTo(0, scrollY);
+  }
 }
 
 // ---------- Welcome Screen ----------
@@ -794,7 +900,7 @@ function openMovieDetail(movieId) {
 
   const canEdit = m.kind === 'together' || m.added_by === state.me.id;
   const posterHtml = m.poster
-    ? `<img src="${esc(m.poster)}" alt="${esc(m.title)}">`
+    ? `<img src="${esc(m.poster)}" alt="${esc(m.title)}" onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('div'),{className:'poster-ph',textContent:'${esc(m.title)}'}))">`
     : `<div class="poster-ph" style="padding:40px 10px;">${esc(m.title)}</div>`;
 
   const metaParts = [];
@@ -872,7 +978,13 @@ function openMovieDetail(movieId) {
   s.querySelector('#editMovieBtn').onclick = () => openMovieEditor(m);
 
   s.querySelector('#deleteMovieBtn').onclick = async () => {
-    if (!confirm(`Delete "${m.title}"?`)) return;
+    const ok = await confirmSheet({
+      title: 'Delete Movie',
+      message: `"${m.title}" will be removed from this list.`,
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+    });
+    if (!ok) return;
     try {
       await api(`/movies/${m.id}`, { method: 'DELETE' });
       closeSheet();
@@ -1093,10 +1205,16 @@ function openMovieEditor(movie) {
 
   // Live autocomplete search as you type
   let searchTimer = null;
+  let searchAbort = null;
   const suggestionsBox = $('#titleSuggestions');
 
   $('#movieTitle').oninput = (e) => {
     clearTimeout(searchTimer);
+    if (searchAbort) {
+      searchAbort.abort();
+      searchAbort = null;
+    }
+
     const val = e.target.value.trim();
     if (val.length < 2) {
       suggestionsBox.hidden = true;
@@ -1105,8 +1223,14 @@ function openMovieEditor(movie) {
     }
 
     searchTimer = setTimeout(async () => {
+      searchAbort = new AbortController();
       try {
-        const data = await api('/movies/search?q=' + encodeURIComponent(val));
+        const res = await fetch('/api/movies/search?q=' + encodeURIComponent(val), {
+          headers: { Authorization: authHeader() },
+          signal: searchAbort.signal,
+        });
+        if (!res.ok) throw new Error();
+        const data = await res.json();
         const list = data.results || [];
         if (!list.length) {
           suggestionsBox.hidden = true;
@@ -1149,10 +1273,13 @@ function openMovieEditor(movie) {
             haptic('light');
           };
         });
-      } catch {
+      } catch (err) {
+        if (err.name === 'AbortError') return;
         suggestionsBox.hidden = true;
+      } finally {
+        searchAbort = null;
       }
-    }, 250);
+    }, 320);
   };
 
   s.addEventListener('click', (e) => {
@@ -1317,7 +1444,13 @@ function openPartySheet() {
   s.querySelector('#createAnotherPartyBtn').onclick = openCreateOrJoinSheet;
 
   s.querySelector('#leavePartyBtn').onclick = async () => {
-    if (!confirm('Leave this party? If you are the last member, it will be deleted.')) return;
+    const ok = await confirmSheet({
+      title: 'Leave Party',
+      message: 'Leave this party? If you are the last member, it will be deleted.',
+      confirmText: 'Leave',
+      cancelText: 'Cancel',
+    });
+    if (!ok) return;
     try {
       await api(`/parties/${p.id}/leave`, { method: 'POST' });
       closeSheet();
@@ -1578,4 +1711,37 @@ function openProfileSheet() {
 
   state.loading = false;
   render();
+  startPolling();
 })();
+
+let pollTimer = null;
+let lastSyncAt = 0;
+
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(async () => {
+    if (document.visibilityState !== 'visible') return;
+    if (currentOverlay) return; // не мешаем открытым sheet
+    try {
+      await loadPartyMovies();
+      refreshMoviesContainer();
+      lastSyncAt = Date.now();
+    } catch { /* silent */ }
+  }, 30000);
+}
+
+function stopPolling() {
+  clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && state.me) {
+    loadPartyMovies().then(() => {
+      refreshMoviesContainer();
+      startPolling();
+    }).catch(() => {});
+  } else {
+    stopPolling();
+  }
+});
