@@ -394,6 +394,9 @@ button {
   display: flex;
   flex-direction: column;
   width: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   transition: transform 0.16s var(--ease-spring), opacity 0.15s ease;
 }
 
@@ -506,14 +509,22 @@ button {
   white-space: nowrap;
 }
 
-/* ---------- Hashtag Filter Bar & List Search ---------- */
+/* ---------- Hashtag Filter Bar, List Search & Sort ---------- */
 .filter-section {
   margin-bottom: 16px;
 }
 
+.filter-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
 .list-search-wrap {
   position: relative;
-  margin-bottom: 10px;
+  flex: 1;
+  min-width: 0;
 }
 
 .list-search-input {
@@ -701,11 +712,19 @@ button {
   line-height: 1.5;
 }
 
-/* ---------- FAB ---------- */
-.fab {
+/* ---------- FAB & Expandable Menu ---------- */
+.fab-container {
   position: fixed;
   right: 20px;
   bottom: calc(var(--safe-bottom) + 24px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.fab {
   width: 56px;
   height: 56px;
   border-radius: 50%;
@@ -713,7 +732,6 @@ button {
   color: var(--accent-contrast);
   display: grid;
   place-items: center;
-  z-index: 40;
   border: 1px solid rgba(255, 255, 255, 0.2);
   box-shadow: 0 8px 24px var(--accent-glow-strong), inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.35);
   backdrop-filter: blur(12px);
@@ -733,6 +751,11 @@ button {
   fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
+  transition: transform 0.2s var(--ease-spring);
+}
+
+.fab.open svg {
+  transform: rotate(45deg);
 }
 
 /* ---------- Floating Island Sheet (Detached iOS Modal Card) ---------- */
@@ -1515,4 +1538,289 @@ textarea {
 @keyframes posterViewerFadeOut {
   from { opacity: 1; }
   to { opacity: 0; }
+}
+
+/* ---------- Expandable FAB Menu ---------- */
+.fab-menu {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  transform-origin: bottom right;
+  animation: fabMenuIn 0.16s var(--ease-spring);
+}
+
+.fab-menu.hidden {
+  display: none;
+}
+
+.fab-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-radius: 16px;
+  background: rgba(24, 24, 28, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  transition: transform 0.14s var(--ease-spring), background 0.15s ease;
+}
+
+.fab-menu-item:active {
+  transform: scale(0.96);
+  background: rgba(38, 38, 44, 0.96);
+}
+
+.fab-menu-item svg {
+  width: 18px;
+  height: 18px;
+  stroke: var(--accent);
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
+@keyframes fabMenuIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.92); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ---------- Sort Button & Dropdown ---------- */
+.sort-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease, transform 0.14s var(--ease-spring);
+}
+
+.sort-btn:active {
+  transform: scale(0.95);
+}
+
+.sort-btn.active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.sort-btn svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sort-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 210px;
+  background: rgba(24, 24, 28, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  padding: 6px;
+  z-index: 45;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.sort-dropdown.hidden {
+  display: none;
+}
+
+.sort-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.sort-option:hover,
+.sort-option:active {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.sort-option.active {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* ---------- Folder Tiles & Breadcrumb ---------- */
+.folder-breadcrumb {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.folder-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 2px;
+  flex-shrink: 0;
+}
+
+.folder-back-btn svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.folder-crumb-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-crumb-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.folders-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+@media (min-width: 520px) {
+  .folders-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.folder-tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  width: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: transform 0.16s var(--ease-spring), opacity 0.15s ease, border-color 0.15s ease;
+}
+
+.folder-tile:active {
+  transform: scale(0.965);
+  opacity: 0.88;
+}
+
+.folder-icon-wrap {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+}
+
+.folder-name {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.folder-count {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.folder-owner-sub {
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.78;
+}
+
+.folder-editor-preview {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 10px 0 14px;
+}
+
+/* ---------- Full-Width Action Stack & Card Date ---------- */
+.action-stack.full-width {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.action-stack.full-width .btn {
+  width: 100%;
+  max-width: none;
+  justify-content: center;
+  flex: none;
+}
+
+.card-date {
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.72;
+  margin-top: 2px;
 }

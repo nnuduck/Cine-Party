@@ -25,6 +25,33 @@ function posterOk(p) {
   );
 }
 
+const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
+
+async function requireEditableFolder(env, folderId, userId) {
+  const folder = await db.getFolder(env, folderId);
+  if (!folder || !(await db.isMember(env, folder.party_id, userId))) {
+    throw new HttpError(404, 'Folder not found');
+  }
+  if (folder.kind === 'personal' && folder.user_id !== userId) {
+    throw new HttpError(403, 'Cannot modify personal folder of another member');
+  }
+  return folder;
+}
+
+async function validateMovieFolder(env, folderId, partyId, movieKind, movieOwnerId) {
+  if (folderId === undefined || folderId === null) return;
+  const folder = await db.getFolder(env, folderId);
+  if (!folder || folder.party_id !== partyId) {
+    throw new HttpError(404, 'Folder not found');
+  }
+  if (folder.kind !== movieKind) {
+    throw new HttpError(400, 'Folder scope does not match movie kind');
+  }
+  if (movieKind === 'personal' && folder.user_id !== movieOwnerId) {
+    throw new HttpError(403, 'Cannot assign movie to another member folder');
+  }
+}
+
 function cleanMovie(b) {
   const out = {};
   if ('title' in b) {
@@ -54,6 +81,18 @@ function cleanMovie(b) {
   }
   if ('status' in b && ['want', 'watched'].includes(b.status)) {
     out.status = b.status;
+  }
+  if ('folder_id' in b) {
+    if (b.folder_id === null || b.folder_id === '') {
+      out.folder_id = null;
+    } else {
+      const fid = Number(b.folder_id);
+      if (Number.isInteger(fid) && fid > 0) {
+        out.folder_id = fid;
+      } else {
+        out.invalid_folder_id = true;
+      }
+    }
   }
   return out;
 }
@@ -367,15 +406,22 @@ async function handleApi(request, env, url, path, method) {
     const m = cleanMovie(body);
     if (!m.title) throw new HttpError(400, 'Movie title is required');
     if (!posterOk(m.poster)) throw new HttpError(400, 'Invalid poster URL');
+    if (m.invalid_folder_id) throw new HttpError(400, 'Invalid folder_id');
+
+    const targetKind = m.kind || 'together';
+    if (m.folder_id !== undefined && m.folder_id !== null) {
+      await validateMovieFolder(env, m.folder_id, partyId, targetKind, user.id);
+    }
 
     const created = await db.addMovie(env, partyId, user.id, {
-      kind: m.kind || 'together',
+      kind: targetKind,
       status: m.status || 'want',
       title: m.title,
       year: m.year,
       poster: m.poster,
       note: m.note,
       tags: m.tags || '',
+      folder_id: m.folder_id ?? null,
       rating: m.status === 'watched' ? m.rating : null,
     });
     return json(created, 201);
@@ -399,10 +445,16 @@ async function handleApi(request, env, url, path, method) {
     const m = cleanMovie(body);
     if ('title' in m && !m.title) throw new HttpError(400, 'Movie title is required');
     if ('poster' in m && !posterOk(m.poster)) throw new HttpError(400, 'Invalid poster URL');
+    if (m.invalid_folder_id) throw new HttpError(400, 'Invalid folder_id');
 
     // Only author can convert shared to personal
     if (m.kind === 'personal' && movie.added_by !== user.id) {
       delete m.kind;
+    }
+
+    const targetKind = m.kind ?? movie.kind;
+    if (m.folder_id !== undefined && m.folder_id !== null) {
+      await validateMovieFolder(env, m.folder_id, movie.party_id, targetKind, movie.added_by);
     }
 
     const updated = await db.updateMovie(env, movieId, m);
@@ -423,6 +475,109 @@ async function handleApi(request, env, url, path, method) {
     }
 
     await db.deleteMovie(env, movieId);
+    return json({ ok: true });
+  }
+
+  // GET /api/parties/:id/folders?tab=together|mine|others&status=want|watched
+  const partyFoldersMatch = path.match(/^\/api\/parties\/(\d+)\/folders$/);
+  if (partyFoldersMatch && method === 'GET') {
+    const partyId = Number(partyFoldersMatch[1]);
+    if (!(await db.isMember(env, partyId, user.id))) {
+      throw new HttpError(403, 'Access denied');
+    }
+    const tab = url.searchParams.get('tab') || 'together';
+    const status = url.searchParams.get('status') || 'want';
+    if (!['together', 'mine', 'others'].includes(tab)) {
+      throw new HttpError(400, 'Invalid folder tab');
+    }
+    if (!['want', 'watched'].includes(status)) {
+      throw new HttpError(400, 'Invalid folder status');
+    }
+    const folders = await db.getFolders(env, partyId, user.id, tab, status);
+    return json({ folders });
+  }
+
+  // POST /api/parties/:id/folders
+  if (partyFoldersMatch && method === 'POST') {
+    const partyId = Number(partyFoldersMatch[1]);
+    if (!(await db.isMember(env, partyId, user.id))) {
+      throw new HttpError(403, 'Access denied');
+    }
+    const body = await request.json().catch(() => ({}));
+    const name = String(body.name || '').trim();
+    if (!name || name.length > 40) {
+      throw new HttpError(400, 'Folder name must be between 1 and 40 characters');
+    }
+    const kind = body.kind;
+    if (!['together', 'personal'].includes(kind)) {
+      throw new HttpError(400, 'Invalid folder kind');
+    }
+    const color = body.color === undefined || body.color === null || body.color === ''
+      ? '#D71921'
+      : String(body.color).trim();
+    if (!HEX_COLOR_RE.test(color)) {
+      throw new HttpError(400, 'Invalid color format');
+    }
+
+    try {
+      const created = await db.createFolder(env, partyId, user.id, { kind, name, color });
+      return json({
+        ...created,
+        movie_count: 0,
+        total_movie_count: 0,
+        preview_posters: [],
+      }, 201);
+    } catch (err) {
+      if (err?.code === 'DUPLICATE_FOLDER') {
+        throw new HttpError(409, 'A folder with this name already exists');
+      }
+      throw err;
+    }
+  }
+
+  // PATCH /api/folders/:id
+  const folderMatch = path.match(/^\/api\/folders\/(\d+)$/);
+  if (folderMatch && method === 'PATCH') {
+    const folderId = Number(folderMatch[1]);
+    const folder = await requireEditableFolder(env, folderId, user.id);
+
+    const body = await request.json().catch(() => ({}));
+    const patch = {};
+    if ('name' in body) {
+      const name = String(body.name || '').trim();
+      if (!name || name.length > 40) {
+        throw new HttpError(400, 'Folder name must be between 1 and 40 characters');
+      }
+      patch.name = name;
+    }
+    if ('color' in body) {
+      const color = String(body.color || '').trim();
+      if (!HEX_COLOR_RE.test(color)) {
+        throw new HttpError(400, 'Invalid color format');
+      }
+      patch.color = color;
+    }
+    if (Object.keys(patch).length === 0) {
+      return json(folder);
+    }
+
+    try {
+      const updated = await db.updateFolder(env, folderId, patch);
+      return json(updated);
+    } catch (err) {
+      if (err?.code === 'DUPLICATE_FOLDER') {
+        throw new HttpError(409, 'A folder with this name already exists');
+      }
+      throw err;
+    }
+  }
+
+  // DELETE /api/folders/:id?deleteMovies=true|false
+  if (folderMatch && method === 'DELETE') {
+    const folderId = Number(folderMatch[1]);
+    await requireEditableFolder(env, folderId, user.id);
+    const deleteMovies = url.searchParams.get('deleteMovies') === 'true';
+    await db.deleteFolder(env, folderId, deleteMovies);
     return json({ ok: true });
   }
 

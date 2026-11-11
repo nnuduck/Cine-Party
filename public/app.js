@@ -67,7 +67,118 @@ window.addEventListener('resize', updateSafeArea);
 
 const $app = document.getElementById('app');
 
+let suppressNextClickUntil = 0;
+let longPressState = null;
+
+function cancelLongPress() {
+  if (!longPressState) return;
+  clearTimeout(longPressState.timer);
+  longPressState = null;
+}
+
+function triggerLongPressAction(target) {
+  if (target.classList.contains('folder-tile')) {
+    const folderId = Number(target.dataset.folderId);
+    const folder = state.folders.find((f) => f.id === folderId);
+    if (!folder) return false;
+    haptic('medium');
+    openFolderContextSheet(folder);
+    return true;
+  }
+  if (target.classList.contains('card')) {
+    if (state.tab === 'others') return false;
+    const id = Number(target.dataset.id);
+    const movie = state.movies.find((m) => m.id === id);
+    if (!movie) return false;
+    const canEdit = movie.kind === 'together' || movie.added_by === state.me?.id;
+    if (!canEdit) return false;
+    haptic('medium');
+    openMoveToFolderSheet(movie);
+    return true;
+  }
+  return false;
+}
+
+document.body.addEventListener('pointerdown', (e) => {
+  if (!e.isPrimary) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  if (e.target.closest('.overlay')) return;
+  const target = e.target.closest('.folder-tile, .card');
+  if (!target) return;
+
+  cancelLongPress();
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const timer = setTimeout(() => {
+    longPressState = null;
+    if (triggerLongPressAction(target)) {
+      suppressNextClickUntil = Date.now() + 500;
+    }
+  }, 500);
+
+  longPressState = { target, startX, startY, timer };
+});
+
+document.body.addEventListener('pointermove', (e) => {
+  if (!longPressState) return;
+  const dx = e.clientX - longPressState.startX;
+  const dy = e.clientY - longPressState.startY;
+  if (Math.hypot(dx, dy) > 8) cancelLongPress();
+});
+
+document.body.addEventListener('pointerup', cancelLongPress);
+document.body.addEventListener('pointercancel', cancelLongPress);
+window.addEventListener('scroll', cancelLongPress, { passive: true });
+
+document.body.addEventListener('contextmenu', (e) => {
+  if (e.target.closest('.overlay')) return;
+  const target = e.target.closest('.folder-tile, .card');
+  if (!target) return;
+  e.preventDefault();
+  cancelLongPress();
+  if (Date.now() < suppressNextClickUntil || currentOverlay) return;
+  triggerLongPressAction(target);
+});
+
 document.body.addEventListener('click', (e) => {
+  const fabMenu = $app.querySelector('#fabMenu');
+  if (fabMenu && !fabMenu.classList.contains('hidden') && !e.target.closest('#fabContainer')) {
+    fabMenu.classList.add('hidden');
+    $app.querySelector('#fabBtn')?.classList.remove('open');
+  }
+  const sortDrop = $app.querySelector('#sortDropdown');
+  if (sortDrop && !sortDrop.classList.contains('hidden') && !e.target.closest('#sortWrap')) {
+    sortDrop.classList.add('hidden');
+  }
+
+  if (Date.now() < suppressNextClickUntil) {
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
+
+  const backBtn = e.target.closest('#folderBackBtn');
+  if (backBtn) {
+    state.selectedFolder = null;
+    haptic('light');
+    render();
+    return;
+  }
+
+  const tile = e.target.closest('.folder-tile');
+  if (tile && tile.dataset.folderId) {
+    const folderId = Number(tile.dataset.folderId);
+    if (!Number.isFinite(folderId) || folderId <= 0) return;
+    state.selectedFolder = folderId;
+    const availableTags = partyTags().map(([t]) => t);
+    if (state.selectedTag && !availableTags.includes(state.selectedTag)) {
+      state.selectedTag = null;
+    }
+    haptic('light');
+    render();
+    return;
+  }
+
   const card = e.target.closest('.card');
   if (!card || !card.dataset.id) return;
   const id = Number(card.dataset.id);
@@ -436,11 +547,14 @@ const state = {
   parties: [],
   partyId: Number(localStorage.getItem('cinema_party_id')) || null,
   movies: [],
+  folders: [],
   customTags: [],
   inviteBase: '',
   tab: 'together', // 'together' | 'mine' | 'others'
   status: 'want', // 'want' | 'watched'
   selectedTag: null, // active hashtag filter
+  selectedFolder: null, // active folder ID or null
+  sortBy: 'date', // 'date' | 'alpha_asc' | 'alpha_desc'
   searchQuery: '', // active text search query
   loading: true,
 };
@@ -486,7 +600,10 @@ function tabMovies() {
 
 function partyTags() {
   const counts = new Map();
-  const candidates = tabMovies();
+  let candidates = tabMovies();
+  if (state.selectedFolder) {
+    candidates = candidates.filter((m) => m.folder_id === state.selectedFolder);
+  }
   for (const m of candidates) {
     const tags = parseTags(m.tags);
     for (const t of tags) {
@@ -539,12 +656,32 @@ async function saveCustomTags(tags) {
   }
 }
 
+async function loadPartyFolders() {
+  if (!state.partyId) {
+    state.folders = [];
+    state.selectedFolder = null;
+    return;
+  }
+  const data = await api(
+    `/parties/${state.partyId}/folders?tab=${encodeURIComponent(state.tab)}&status=${encodeURIComponent(state.status)}`
+  );
+  state.folders = data.folders || [];
+  if (state.selectedFolder && !state.folders.some((f) => f.id === state.selectedFolder)) {
+    state.selectedFolder = null;
+  }
+}
+
 async function loadPartyMovies() {
   if (!state.partyId) {
     state.movies = [];
+    state.folders = [];
+    state.selectedFolder = null;
     return;
   }
-  const data = await api(`/parties/${state.partyId}/movies`);
+  const [data] = await Promise.all([
+    api(`/parties/${state.partyId}/movies`),
+    loadPartyFolders(),
+  ]);
   state.movies = data.movies || [];
 }
 
@@ -556,11 +693,82 @@ async function refreshAll() {
 }
 
 // ---------- UI Rendering ----------
+function parseDbDate(raw) {
+  if (!raw) return null;
+  let s = String(raw).trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) {
+    s = s.replace(' ', 'T') + 'Z';
+  } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(s)) {
+    s += 'Z';
+  }
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function formatShortDate(raw) {
+  const d = parseDbDate(raw);
+  if (!d) return '';
+  try {
+    const sameYear = d.getFullYear() === new Date().getFullYear();
+    return d.toLocaleDateString(
+      'en-US',
+      sameYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' }
+    );
+  } catch {
+    return '';
+  }
+}
+
+function darkenHex(hex, amount = 0.3) {
+  const clean = /^#[0-9A-Fa-f]{6}$/.test(hex || '') ? hex : '#D71921';
+  const n = parseInt(clean.slice(1), 16);
+  const r = Math.max(0, Math.round(((n >> 16) & 255) * (1 - amount)));
+  const g = Math.max(0, Math.round(((n >> 8) & 255) * (1 - amount)));
+  const b = Math.max(0, Math.round((n & 255) * (1 - amount)));
+  return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function renderFolderIcon(color = '#D71921', size = 64) {
+  const front = /^#[0-9A-Fa-f]{6}$/.test(color || '') ? color : '#D71921';
+  const back = darkenHex(front, 0.3);
+  return `
+    <svg width="${size}" height="${size}" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+      <path d="M8 17C8 13.6863 10.6863 11 14 11H24.6C26.4 11 28.1 11.8 29.2 13.2L31.4 16H50C53.3137 16 56 18.6863 56 22V26H8V17Z" fill="${esc(back)}"/>
+      <rect x="6" y="21" width="52" height="33" rx="7" fill="${esc(front)}" fill-opacity="0.92"/>
+      <rect x="6" y="21" width="52" height="33" rx="7" stroke="rgba(255,255,255,0.22)" stroke-width="1"/>
+    </svg>
+  `;
+}
+
+function renderFolderTile(folder) {
+  const count = Number(folder.movie_count || 0);
+  const countLabel = `${count} ${count === 1 ? 'movie' : 'movies'}`;
+  const ownerSub = state.tab === 'others' && folder.owner_name
+    ? `<div class="folder-owner-sub">${esc(folder.owner_name)}</div>`
+    : '';
+  return `
+    <button type="button" class="folder-tile" data-folder-id="${folder.id}">
+      <div class="folder-icon-wrap">${renderFolderIcon(folder.color, 64)}</div>
+      <div class="folder-name">${esc(folder.name)}</div>
+      <div class="folder-count">${countLabel}</div>
+      ${ownerSub}
+    </button>
+  `;
+}
+
 function visibleMovies() {
   const sq = (state.searchQuery || '').trim().toLowerCase();
   const selectedTag = state.selectedTag ? state.selectedTag.toLowerCase() : null;
+  const shownFolderIds = new Set(state.folders.map((f) => f.id));
 
-  return tabMovies().filter((m) => {
+  const filtered = tabMovies().filter((m) => {
+    if (state.selectedFolder) {
+      if (m.folder_id !== state.selectedFolder) return false;
+    } else if (!sq && !selectedTag) {
+      if (m.folder_id && shownFolderIds.has(m.folder_id)) return false;
+    }
+
     if (selectedTag) {
       const mTags = parseTags(m.tags);
       if (!mTags.includes(selectedTag)) return false;
@@ -576,6 +784,18 @@ function visibleMovies() {
 
     return true;
   });
+
+  if (state.sortBy === 'alpha_asc') {
+    return [...filtered].sort((a, b) =>
+      (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' })
+    );
+  }
+  if (state.sortBy === 'alpha_desc') {
+    return [...filtered].sort((a, b) =>
+      (b.title || '').localeCompare(a.title || '', undefined, { sensitivity: 'base' })
+    );
+  }
+  return filtered;
 }
 
 function hashString(str) {
@@ -597,6 +817,9 @@ function hashMovie(m) {
     m.note ? hashString(String(m.note)) : 0,
     m.kind || '',
     m.added_by_name || '',
+    m.folder_id || '',
+    m.created_at || '',
+    m.watched_at || '',
   ].join('|');
 }
 
@@ -626,6 +849,12 @@ function renderCard(m) {
     meta = esc(m.year);
   }
 
+  const dateRaw = m.status === 'watched' && m.watched_at ? m.watched_at : m.created_at;
+  const dateText = formatShortDate(dateRaw);
+  const dateLabel = dateText
+    ? (m.status === 'watched' && m.watched_at ? `Watched ${dateText}` : `Added ${dateText}`)
+    : '';
+
   const tags = parseTags(m.tags);
   const tagsHtml = tags.length
     ? `<div class="card-tags">${tags.slice(0, 2).map((t) => `<span class="movie-tag">${esc(t)}</span>`).join('')}${tags.length > 2 ? `<span class="movie-tag more">+${tags.length - 2}</span>` : ''}</div>`
@@ -640,6 +869,7 @@ function renderCard(m) {
       </div>
       <div class="card-title">${esc(m.title)}</div>
       ${meta ? `<div class="card-meta">${meta}</div>` : ''}
+      ${dateLabel ? `<div class="card-date">${esc(dateLabel)}</div>` : ''}
       ${tagsHtml}
     </button>
   `;
@@ -648,6 +878,11 @@ function renderCard(m) {
 function emptyMessage() {
   if (state.searchQuery || state.selectedTag) {
     return 'No movies match current filter or search.';
+  }
+  if (state.selectedFolder) {
+    return state.status === 'watched'
+      ? 'No watched movies in this folder yet.'
+      : 'No movies in this folder yet.';
   }
   if (state.status === 'watched') {
     return state.tab === 'together'
@@ -681,27 +916,79 @@ function createCardEl(m) {
 
 let filterSearchTimer = null;
 
+const SORT_OPTIONS = [
+  { value: 'date', label: 'Date added (newest first)', shortLabel: 'Newest' },
+  { value: 'alpha_asc', label: 'A → Z', shortLabel: 'A → Z' },
+  { value: 'alpha_desc', label: 'Z → A', shortLabel: 'Z → A' },
+];
+
 function refreshMoviesContainer() {
   const container = $app.querySelector('#moviesContainer');
   if (!container) return;
+
+  const breadcrumbEl = container.querySelector('#folderBreadcrumb');
+  const foldersEl = container.querySelector('#foldersContainer');
+  const gridContainer = container.querySelector('#gridContainer') || container;
+
+  const activeFolder = state.selectedFolder
+    ? state.folders.find((f) => f.id === state.selectedFolder)
+    : null;
+  if (state.selectedFolder && !activeFolder) {
+    state.selectedFolder = null;
+  }
+
+  if (breadcrumbEl) {
+    breadcrumbEl.innerHTML = activeFolder
+      ? `
+        <div class="folder-breadcrumb">
+          <button type="button" class="folder-back-btn" id="folderBackBtn">
+            <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
+            Back to all
+          </button>
+          <div class="folder-crumb-title">
+            <span class="folder-crumb-dot" style="background:${esc(activeFolder.color)}"></span>
+            <span>${esc(activeFolder.name)}</span>
+          </div>
+        </div>
+      `
+      : '';
+  }
+
+  const showFolders = !state.selectedFolder
+    && !(state.searchQuery || '').trim()
+    && !state.selectedTag
+    && state.folders.length > 0;
+
+  if (foldersEl) {
+    if (showFolders) {
+      foldersEl.className = 'folders-grid';
+      foldersEl.innerHTML = state.folders.map(renderFolderTile).join('');
+    } else {
+      foldersEl.className = '';
+      foldersEl.innerHTML = '';
+    }
+  }
+
   const list = visibleMovies();
 
   // Empty state
   if (list.length === 0) {
-    if (!container.querySelector('.empty-box')) {
-      container.innerHTML = emptyStateHtml();
+    if (showFolders) {
+      gridContainer.innerHTML = '';
+    } else if (!gridContainer.querySelector('.empty-box')) {
+      gridContainer.innerHTML = emptyStateHtml();
     } else {
-      const txt = container.querySelector('.empty-text');
+      const txt = gridContainer.querySelector('.empty-text');
       if (txt) txt.textContent = emptyMessage();
     }
     return;
   }
 
   // Ensure grid exists
-  let grid = container.querySelector('.grid');
+  let grid = gridContainer.querySelector('.grid');
   if (!grid) {
-    container.innerHTML = '<div class="grid"></div>';
-    grid = container.querySelector('.grid');
+    gridContainer.innerHTML = '<div class="grid"></div>';
+    grid = gridContainer.querySelector('.grid');
   }
 
   const wantedIds = new Set(list.map((m) => m.id));
@@ -742,15 +1029,38 @@ function refreshMoviesContainer() {
 
 function renderFilterSection() {
   const tagsList = partyTags();
+  const activeSort = SORT_OPTIONS.find((o) => o.value === state.sortBy) || SORT_OPTIONS[0];
   return `
     <div class="filter-section">
-      <div class="list-search-wrap">
-        <svg class="list-search-icon" viewBox="0 0 24 24">
-          <circle cx="11" cy="11" r="8"></circle>
-          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-        </svg>
-        <input type="text" class="list-search-input" id="listSearchInput" placeholder="Search title, year, #tag..." value="${esc(state.searchQuery)}">
-        ${state.searchQuery ? `<button type="button" class="list-search-clear" id="listSearchClear">&times;</button>` : ''}
+      <div class="filter-search-row">
+        <div class="list-search-wrap">
+          <svg class="list-search-icon" viewBox="0 0 24 24">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" class="list-search-input" id="listSearchInput" placeholder="Search title, year, #tag..." value="${esc(state.searchQuery)}">
+          ${state.searchQuery ? `<button type="button" class="list-search-clear" id="listSearchClear">&times;</button>` : ''}
+        </div>
+        <div class="sort-wrap" id="sortWrap">
+          <button type="button" class="sort-btn ${state.sortBy !== 'date' ? 'active' : ''}" id="sortBtn" aria-label="Sort movies">
+            <svg viewBox="0 0 24 24">
+              <line x1="4" y1="6" x2="14" y2="6"></line>
+              <line x1="4" y1="12" x2="11" y2="12"></line>
+              <line x1="4" y1="18" x2="8" y2="18"></line>
+              <polyline points="15 15 18 18 21 15"></polyline>
+              <line x1="18" y1="6" x2="18" y2="18"></line>
+            </svg>
+            <span id="sortBtnLabel">${esc(activeSort.shortLabel)}</span>
+          </button>
+          <div class="sort-dropdown hidden" id="sortDropdown">
+            ${SORT_OPTIONS.map((opt) => `
+              <button type="button" class="sort-option ${state.sortBy === opt.value ? 'active' : ''}" data-sort="${opt.value}">
+                <span>${esc(opt.label)}</span>
+                ${state.sortBy === opt.value ? '<span>✓</span>' : ''}
+              </button>
+            `).join('')}
+          </div>
+        </div>
       </div>
       ${
         tagsList.length
@@ -777,6 +1087,8 @@ function renderFilterSection() {
 function bindFilterEvents() {
   const input = $app.querySelector('#listSearchInput');
   const clearBtn = $app.querySelector('#listSearchClear');
+  const sortBtn = $app.querySelector('#sortBtn');
+  const sortDropdown = $app.querySelector('#sortDropdown');
 
   if (input) {
     input.oninput = (e) => {
@@ -797,6 +1109,38 @@ function bindFilterEvents() {
     };
   }
 
+  if (sortBtn && sortDropdown) {
+    sortBtn.onclick = (e) => {
+      e.stopPropagation();
+      $app.querySelector('#fabMenu')?.classList.add('hidden');
+      $app.querySelector('#fabBtn')?.classList.remove('open');
+      sortDropdown.classList.toggle('hidden');
+      haptic('light');
+    };
+
+    sortDropdown.querySelectorAll('.sort-option').forEach((optBtn) => {
+      optBtn.onclick = (e) => {
+        e.stopPropagation();
+        const nextSort = optBtn.dataset.sort;
+        if (!nextSort) return;
+        state.sortBy = nextSort;
+        const activeSort = SORT_OPTIONS.find((o) => o.value === nextSort) || SORT_OPTIONS[0];
+        const lbl = $app.querySelector('#sortBtnLabel');
+        if (lbl) lbl.textContent = activeSort.shortLabel;
+        sortBtn.classList.toggle('active', state.sortBy !== 'date');
+        sortDropdown.querySelectorAll('.sort-option').forEach((btn) => {
+          const isMatch = btn.dataset.sort === state.sortBy;
+          btn.classList.toggle('active', isMatch);
+          const item = SORT_OPTIONS.find((o) => o.value === btn.dataset.sort);
+          btn.innerHTML = `<span>${esc(item?.label || '')}</span>${isMatch ? '<span>✓</span>' : ''}`;
+        });
+        sortDropdown.classList.add('hidden');
+        haptic('light');
+        refreshMoviesContainer();
+      };
+    });
+  }
+
   $app.querySelectorAll('#tagFilterBar .tag-filter-chip').forEach((chip) => {
     chip.onclick = () => {
       const tag = chip.dataset.tag || null;
@@ -814,11 +1158,16 @@ function bindFilterEvents() {
 function switchTab(newTab) {
   if (state.tab === newTab) return;
   state.tab = newTab;
+  state.selectedFolder = null;
+  state.folders = [];
   const availableTags = partyTags().map(([t]) => t);
   if (state.selectedTag && !availableTags.includes(state.selectedTag)) {
     state.selectedTag = null;
   }
   render();
+  loadPartyFolders().then(() => {
+    refreshMoviesContainer();
+  }).catch(() => {});
 }
 
 function switchStatus(newStatus) {
@@ -829,6 +1178,9 @@ function switchStatus(newStatus) {
     state.selectedTag = null;
   }
   render();
+  loadPartyFolders().then(() => {
+    refreshMoviesContainer();
+  }).catch(() => {});
 }
 
 function render() {
@@ -845,7 +1197,6 @@ function render() {
   }
 
   const p = currentParty();
-  const list = visibleMovies();
   const membersCount = (p.members || []).length;
   const avatarsHtml = (p.members || [])
     .slice(0, 3)
@@ -900,33 +1251,33 @@ function render() {
       ${renderFilterSection()}
 
       <div id="moviesContainer">
-      ${
-        list.length
-          ? `<div class="grid">${list.map(renderCard).join('')}</div>`
-          : `
-            <div class="empty-box">
-              <div class="dotted-illustration">
-                <span></span><span></span><span></span><span></span>
-                <span></span><span class="active"></span><span></span><span></span>
-                <span></span><span></span><span class="active"></span><span></span>
-                <span></span><span></span><span></span><span></span>
-              </div>
-              <div class="empty-text">${emptyMessage()}</div>
-            </div>
-          `
-      }
+        <div id="folderBreadcrumb"></div>
+        <div id="foldersContainer"></div>
+        <div id="gridContainer"></div>
       </div>
     </div>
 
     ${
       state.tab !== 'others'
         ? `
-          <button class="fab" id="fabBtn" aria-label="Add Movie">
-            <svg viewBox="0 0 24 24">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-          </button>
+          <div class="fab-container" id="fabContainer">
+            <div class="fab-menu hidden" id="fabMenu">
+              <button type="button" class="fab-menu-item" id="fabAddMovieBtn">
+                <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line></svg>
+                <span>Add Movie</span>
+              </button>
+              <button type="button" class="fab-menu-item" id="fabCreateFolderBtn">
+                <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                <span>Create Folder</span>
+              </button>
+            </div>
+            <button type="button" class="fab" id="fabBtn" aria-label="Actions">
+              <svg viewBox="0 0 24 24">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+            </button>
+          </div>
         `
         : ''
     }
@@ -935,10 +1286,31 @@ function render() {
   $app.querySelector('#partySelectBtn').onclick = openPartySheet;
   $app.querySelector('#profileBtn').onclick = openProfileSheet;
   bindFilterEvents();
-  $app.querySelector('#fabBtn')?.addEventListener('click', () => {
-    haptic('medium');
-    openMovieEditor();
-  });
+  refreshMoviesContainer();
+  const fabBtn = $app.querySelector('#fabBtn');
+  const fabMenu = $app.querySelector('#fabMenu');
+  if (fabBtn && fabMenu) {
+    fabBtn.onclick = (e) => {
+      e.stopPropagation();
+      $app.querySelector('#sortDropdown')?.classList.add('hidden');
+      const willOpen = fabMenu.classList.contains('hidden');
+      fabMenu.classList.toggle('hidden', !willOpen);
+      fabBtn.classList.toggle('open', willOpen);
+      haptic('light');
+    };
+    $app.querySelector('#fabAddMovieBtn').onclick = () => {
+      fabMenu.classList.add('hidden');
+      fabBtn.classList.remove('open');
+      haptic('medium');
+      openMovieEditor();
+    };
+    $app.querySelector('#fabCreateFolderBtn').onclick = () => {
+      fabMenu.classList.add('hidden');
+      fabBtn.classList.remove('open');
+      haptic('medium');
+      openFolderEditor();
+    };
+  }
 
   $app.querySelectorAll('[data-tab]').forEach((b) => {
     b.onclick = () => {
@@ -1014,6 +1386,342 @@ function renderWelcome() {
     } catch (e) {
       toast(e.message);
     }
+  };
+}
+
+// ---------- Folder Sheets (Create / Rename / Context / Delete / Move Movie) ----------
+function openFolderEditor(folder = null, options = {}) {
+  const isEdit = Boolean(folder);
+  const targetKind = folder?.kind || options.kind || (state.tab === 'mine' ? 'personal' : 'together');
+  let selectedColor = /^#[0-9A-Fa-f]{6}$/.test(folder?.color || '') ? folder.color : '#D71921';
+
+  const s = openSheet(`
+    <h2 class="sheet-title display">${isEdit ? 'Edit Folder' : 'New Folder'}</h2>
+    <div class="folder-editor-preview" id="folderIconPreview">
+      ${renderFolderIcon(selectedColor, 64)}
+    </div>
+    <div class="field">
+      <label class="field-label" for="folderNameInput">Folder Name</label>
+      <input type="text" id="folderNameInput" maxlength="40" value="${esc(folder?.name || '')}" placeholder="e.g. Weekend Watchlist">
+    </div>
+    <div class="field">
+      <label class="field-label">Color</label>
+      <div class="swatches" id="folderSwatchRow">
+        ${PRESET_SWATCHES.map((hex) => `
+          <button type="button" class="swatch ${selectedColor.toLowerCase() === hex.toLowerCase() ? 'active' : ''}" data-color="${hex}" style="background:${hex};" aria-label="Color ${hex}"></button>
+        `).join('')}
+      </div>
+      <div class="color-row" style="margin-top:10px;">
+        <input type="color" id="folderColorPicker" value="${esc(selectedColor)}" aria-label="Custom folder color">
+        <span style="font-size:13px; color:var(--muted);">Custom color</span>
+      </div>
+    </div>
+    <div class="action-stack">
+      <button type="button" class="btn primary" id="saveFolderBtn">${isEdit ? 'Save' : 'Create'}</button>
+      <button type="button" class="btn" id="cancelFolderBtn">Cancel</button>
+    </div>
+  `);
+
+  const nameInput = s.querySelector('#folderNameInput');
+  const previewEl = s.querySelector('#folderIconPreview');
+  const colorPicker = s.querySelector('#folderColorPicker');
+  const saveBtn = s.querySelector('#saveFolderBtn');
+  const cancelBtn = s.querySelector('#cancelFolderBtn');
+
+  function syncColor(hex) {
+    if (!/^#[0-9A-Fa-f]{6}$/.test(hex || '')) return;
+    selectedColor = hex;
+    previewEl.innerHTML = renderFolderIcon(selectedColor, 64);
+    colorPicker.value = selectedColor;
+    s.querySelectorAll('#folderSwatchRow .swatch').forEach((sw) => {
+      sw.classList.toggle('active', sw.dataset.color.toLowerCase() === selectedColor.toLowerCase());
+    });
+  }
+
+  s.querySelectorAll('#folderSwatchRow .swatch').forEach((sw) => {
+    sw.onclick = () => {
+      haptic('light');
+      syncColor(sw.dataset.color);
+    };
+  });
+
+  colorPicker.oninput = (e) => {
+    syncColor(e.target.value);
+  };
+
+  cancelBtn.onclick = closeSheet;
+
+  async function submitFolder() {
+    const name = nameInput.value.trim();
+    if (!name) {
+      toast('Folder name is required');
+      nameInput.focus();
+      return;
+    }
+    saveBtn.disabled = true;
+    saveBtn.textContent = isEdit ? 'Saving...' : 'Creating...';
+    try {
+      const saved = isEdit
+        ? await api(`/folders/${folder.id}`, { method: 'PATCH', body: { name, color: selectedColor } })
+        : await api(`/parties/${state.partyId}/folders`, {
+            method: 'POST',
+            body: { name, color: selectedColor, kind: targetKind },
+          });
+      hapticNotice('success');
+      closeSheet();
+      if (typeof options.onCreated === 'function') {
+        await options.onCreated(saved);
+      } else {
+        toast(isEdit ? 'Folder updated' : 'Folder created');
+      }
+      await loadPartyMovies();
+      render();
+    } catch (err) {
+      toast(err.message || 'Failed to save folder');
+      saveBtn.disabled = false;
+      saveBtn.textContent = isEdit ? 'Save' : 'Create';
+    }
+  }
+
+  saveBtn.onclick = submitFolder;
+  nameInput.onkeydown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitFolder();
+    }
+  };
+
+  setTimeout(() => {
+    if (options.focus === 'color') {
+      colorPicker?.focus();
+    } else {
+      nameInput?.focus();
+      if (isEdit) nameInput?.select();
+    }
+  }, 100);
+}
+
+function openDeleteFolderSheet(folder) {
+  const count = Number(folder.total_movie_count ?? folder.movie_count ?? 0);
+  const s = openSheet(`
+    <h2 class="sheet-title display">Delete "${esc(folder.name)}"?</h2>
+    <div style="color:var(--muted); font-size:14px; line-height:1.5; margin-bottom:20px;">
+      This folder contains ${count} ${count === 1 ? 'movie' : 'movies'}. Choose what to do with them.
+    </div>
+    <div class="action-stack full-width">
+      <button type="button" class="btn primary" id="deleteKeepMoviesBtn">Move movies out (keep them)</button>
+      <button type="button" class="btn danger" id="deleteAllMoviesBtn">Delete movies too</button>
+      <button type="button" class="btn" id="cancelDeleteFolderBtn">Cancel</button>
+    </div>
+  `);
+
+  s.querySelector('#cancelDeleteFolderBtn').onclick = closeSheet;
+
+  s.querySelector('#deleteKeepMoviesBtn').onclick = async () => {
+    const btn = s.querySelector('#deleteKeepMoviesBtn');
+    btn.disabled = true;
+    try {
+      await api(`/folders/${folder.id}?deleteMovies=false`, { method: 'DELETE' });
+      if (state.selectedFolder === folder.id) state.selectedFolder = null;
+      hapticNotice('success');
+      closeSheet();
+      await loadPartyMovies();
+      render();
+      toast('Folder deleted');
+    } catch (err) {
+      toast(err.message || 'Failed to delete folder');
+      btn.disabled = false;
+    }
+  };
+
+  s.querySelector('#deleteAllMoviesBtn').onclick = async () => {
+    const ok = await confirmSheet({
+      title: 'Delete Folder & Movies?',
+      message: `This will permanently delete "${folder.name}" and all ${count} ${count === 1 ? 'movie' : 'movies'} inside it.`,
+      confirmText: 'Delete permanently',
+      cancelText: 'Cancel',
+    });
+    if (!ok) return;
+    try {
+      await api(`/folders/${folder.id}?deleteMovies=true`, { method: 'DELETE' });
+      if (state.selectedFolder === folder.id) state.selectedFolder = null;
+      hapticNotice('success');
+      await loadPartyMovies();
+      render();
+      toast('Folder and movies deleted');
+    } catch (err) {
+      toast(err.message || 'Failed to delete folder');
+    }
+  };
+}
+
+function openFolderContextSheet(folder) {
+  const canEdit = state.tab !== 'others' && (folder.kind === 'together' || folder.user_id === state.me?.id);
+  const count = Number(folder.movie_count || 0);
+  const totalCount = Number(folder.total_movie_count ?? count);
+  const subText = state.tab === 'others' && folder.owner_name
+    ? `${count} ${count === 1 ? 'movie' : 'movies'} · By ${folder.owner_name}`
+    : `${count} ${count === 1 ? 'movie' : 'movies'} here`;
+
+  if (!canEdit) {
+    const s = openSheet(`
+      <div class="folder-editor-preview" style="padding:4px 0 8px;">${renderFolderIcon(folder.color, 56)}</div>
+      <h2 class="sheet-title display" style="text-align:center;">${esc(folder.name)}</h2>
+      <div style="text-align:center; color:var(--muted); font-size:13px; margin-bottom:18px;">${esc(subText)}</div>
+      <div class="action-stack full-width">
+        <button type="button" class="btn primary" id="viewFolderBtn">View Folder</button>
+        <button type="button" class="btn" id="closeFolderCtxBtn">Cancel</button>
+      </div>
+    `);
+    s.querySelector('#viewFolderBtn').onclick = () => {
+      state.selectedFolder = folder.id;
+      closeSheet();
+      render();
+    };
+    s.querySelector('#closeFolderCtxBtn').onclick = closeSheet;
+    return;
+  }
+
+  const s = openSheet(`
+    <div class="folder-editor-preview" style="padding:4px 0 8px;">${renderFolderIcon(folder.color, 56)}</div>
+    <h2 class="sheet-title display" style="text-align:center;">${esc(folder.name)}</h2>
+    <div style="text-align:center; color:var(--muted); font-size:13px; margin-bottom:18px;">${esc(subText)}</div>
+    <div class="action-stack full-width">
+      <button type="button" class="btn" id="renameFolderBtn">Rename</button>
+      <button type="button" class="btn" id="recolorFolderBtn">Change Color</button>
+      <button type="button" class="btn danger" id="deleteFolderBtn">Delete Folder</button>
+      <button type="button" class="btn" id="closeFolderCtxBtn">Cancel</button>
+    </div>
+  `);
+
+  s.querySelector('#renameFolderBtn').onclick = () => {
+    closeSheet();
+    openFolderEditor(folder, { focus: 'name' });
+  };
+
+  s.querySelector('#recolorFolderBtn').onclick = () => {
+    closeSheet();
+    openFolderEditor(folder, { focus: 'color' });
+  };
+
+  s.querySelector('#deleteFolderBtn').onclick = async () => {
+    if (totalCount > 0) {
+      openDeleteFolderSheet(folder);
+      return;
+    }
+    const ok = await confirmSheet({
+      title: 'Delete Folder?',
+      message: `Delete empty folder "${folder.name}"?`,
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+    });
+    if (!ok) return;
+    try {
+      await api(`/folders/${folder.id}?deleteMovies=false`, { method: 'DELETE' });
+      if (state.selectedFolder === folder.id) state.selectedFolder = null;
+      hapticNotice('success');
+      await loadPartyMovies();
+      render();
+      toast('Folder deleted');
+    } catch (err) {
+      toast(err.message || 'Failed to delete folder');
+    }
+  };
+
+  s.querySelector('#closeFolderCtxBtn').onclick = closeSheet;
+}
+
+async function openMoveToFolderSheet(movie) {
+  let folders = [];
+  if (
+    (movie.kind === 'together' && state.tab === 'together') ||
+    (movie.kind === 'personal' && state.tab === 'mine')
+  ) {
+    folders = state.folders;
+  } else {
+    try {
+      const targetTab = movie.kind === 'personal' ? 'mine' : 'together';
+      const data = await api(
+        `/parties/${state.partyId}/folders?tab=${targetTab}&status=${encodeURIComponent(state.status)}`
+      );
+      folders = data.folders || [];
+    } catch {
+      toast('Failed to load folders');
+      return;
+    }
+  }
+
+  const s = openSheet(`
+    <h2 class="sheet-title display">Move "${esc(movie.title)}"</h2>
+    <div style="color:var(--muted); font-size:13px; margin-bottom:16px;">
+      Choose a ${movie.kind === 'personal' ? 'Personal' : 'Together'} folder.
+    </div>
+    <div class="action-stack full-width">
+      ${movie.folder_id ? `<button type="button" class="btn" id="removeFromFolderBtn">Remove from folder</button>` : ''}
+      ${folders
+        .map((f) => {
+          const isCurrent = movie.folder_id === f.id;
+          return `
+            <button type="button" class="btn ${isCurrent ? 'primary' : ''}" data-move-folder-id="${f.id}" ${isCurrent ? 'disabled' : ''}>
+              <span class="folder-crumb-dot" style="background:${esc(f.color)};"></span>
+              <span>${esc(f.name)}${isCurrent ? ' (current)' : ''}</span>
+            </button>
+          `;
+        })
+        .join('')}
+      <button type="button" class="btn primary" id="createMoveFolderBtn">+ Create new folder</button>
+      <button type="button" class="btn" id="cancelMoveFolderBtn">Cancel</button>
+    </div>
+  `);
+
+  s.querySelector('#cancelMoveFolderBtn').onclick = closeSheet;
+
+  const removeBtn = s.querySelector('#removeFromFolderBtn');
+  if (removeBtn) {
+    removeBtn.onclick = async () => {
+      removeBtn.disabled = true;
+      try {
+        await api(`/movies/${movie.id}`, { method: 'PATCH', body: { folder_id: null } });
+        hapticNotice('success');
+        closeSheet();
+        await loadPartyMovies();
+        render();
+        toast('Removed from folder');
+      } catch (err) {
+        toast(err.message || 'Failed to move movie');
+        removeBtn.disabled = false;
+      }
+    };
+  }
+
+  s.querySelectorAll('[data-move-folder-id]').forEach((btn) => {
+    btn.onclick = async () => {
+      const targetId = Number(btn.dataset.moveFolderId);
+      btn.disabled = true;
+      try {
+        await api(`/movies/${movie.id}`, { method: 'PATCH', body: { folder_id: targetId } });
+        hapticNotice('success');
+        closeSheet();
+        await loadPartyMovies();
+        render();
+        const targetFolder = folders.find((x) => x.id === targetId);
+        toast(targetFolder ? `Moved to "${targetFolder.name}"` : 'Moved to folder');
+      } catch (err) {
+        toast(err.message || 'Failed to move movie');
+        btn.disabled = false;
+      }
+    };
+  });
+
+  s.querySelector('#createMoveFolderBtn').onclick = () => {
+    closeSheet();
+    openFolderEditor(null, {
+      kind: movie.kind,
+      onCreated: async (newFolder) => {
+        await api(`/movies/${movie.id}`, { method: 'PATCH', body: { folder_id: newFolder.id } });
+        toast(`Moved to "${newFolder.name}"`);
+      },
+    });
   };
 }
 
@@ -1855,6 +2563,12 @@ function openMovieEditor(movie) {
       status: draft.status,
       rating: draft.status === 'watched' ? draft.rating : null,
     };
+    if (!isEdit && state.selectedFolder) {
+      const activeFolder = state.folders.find((f) => f.id === state.selectedFolder);
+      if (activeFolder && activeFolder.kind === draft.kind) {
+        payload.folder_id = activeFolder.id;
+      }
+    }
 
     const saveBtn = $('#saveMovieBtn');
     saveBtn.disabled = true;
@@ -1951,6 +2665,8 @@ function openPartySheet() {
   s.querySelectorAll('[data-pid]').forEach((b) => {
     b.onclick = async () => {
       state.partyId = Number(b.dataset.pid);
+      state.selectedFolder = null;
+      state.folders = [];
       localStorage.setItem('cinema_party_id', state.partyId);
       closeSheet();
       state.loading = true;
@@ -1986,6 +2702,8 @@ function openPartySheet() {
       await api(`/parties/${p.id}/leave`, { method: 'POST' });
       closeSheet();
       state.partyId = null;
+      state.selectedFolder = null;
+      state.folders = [];
       localStorage.removeItem('cinema_party_id');
       await refreshAll();
       toast('Left party');
@@ -2024,6 +2742,8 @@ function openCreateOrJoinSheet() {
     try {
       const p = await api('/parties', { method: 'POST', body: { name } });
       state.partyId = p.id;
+      state.selectedFolder = null;
+      state.folders = [];
       localStorage.setItem('cinema_party_id', p.id);
       closeSheet();
       await refreshAll();
@@ -2039,6 +2759,8 @@ function openCreateOrJoinSheet() {
     try {
       const res = await api('/parties/join', { method: 'POST', body: { code } });
       state.partyId = res.id;
+      state.selectedFolder = null;
+      state.folders = [];
       localStorage.setItem('cinema_party_id', res.id);
       closeSheet();
       await refreshAll();

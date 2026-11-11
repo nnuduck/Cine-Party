@@ -128,6 +128,7 @@ export async function leaveParty(env, partyId, userId) {
       await deleteCover(env, coverId);
     }
     await env.DB.prepare('DELETE FROM movies WHERE party_id = ?').bind(partyId).run();
+    await env.DB.prepare('DELETE FROM folders WHERE party_id = ?').bind(partyId).run();
     await env.DB.prepare('DELETE FROM parties WHERE id = ?').bind(partyId).run();
   }
 }
@@ -207,8 +208,8 @@ export async function getMovie(env, movieId) {
 
 export async function addMovie(env, partyId, userId, data) {
   const res = await env.DB.prepare(
-    `INSERT INTO movies (party_id, added_by, kind, status, title, year, poster, note, rating, tags, watched_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
+    `INSERT INTO movies (party_id, added_by, kind, status, title, year, poster, note, rating, tags, folder_id, watched_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`
   )
     .bind(
       partyId,
@@ -221,6 +222,7 @@ export async function addMovie(env, partyId, userId, data) {
       data.note || null,
       data.rating || null,
       data.tags || '',
+      data.folder_id ?? null,
       data.status === 'watched' ? new Date().toISOString() : null
     )
     .run();
@@ -244,6 +246,15 @@ export async function updateMovie(env, movieId, data) {
     watchedAt = data.status === 'watched' ? new Date().toISOString() : null;
   }
 
+  const nextKind = data.kind ?? current.kind;
+  let nextFolderId = current.folder_id ?? null;
+  if (data.folder_id !== undefined) {
+    nextFolderId = data.folder_id;
+  } else if (nextKind !== current.kind) {
+    // Clear stale folder assignment when moving between shared and personal lists
+    nextFolderId = null;
+  }
+
   const fields = {
     title: data.title ?? current.title,
     year: data.year !== undefined ? data.year : current.year,
@@ -251,8 +262,9 @@ export async function updateMovie(env, movieId, data) {
     note: data.note !== undefined ? data.note : current.note,
     rating: data.rating !== undefined ? data.rating : current.rating,
     tags: data.tags !== undefined ? data.tags : (current.tags || ''),
-    kind: data.kind ?? current.kind,
+    kind: nextKind,
     status: data.status ?? current.status,
+    folder_id: nextFolderId,
     watched_at: watchedAt,
   };
 
@@ -266,8 +278,9 @@ export async function updateMovie(env, movieId, data) {
        tags = ?6,
        kind = ?7,
        status = ?8,
-       watched_at = ?9
-     WHERE id = ?10`
+       folder_id = ?9,
+       watched_at = ?10
+     WHERE id = ?11`
   )
     .bind(
       fields.title,
@@ -278,6 +291,7 @@ export async function updateMovie(env, movieId, data) {
       fields.tags,
       fields.kind,
       fields.status,
+      fields.folder_id,
       fields.watched_at,
       movieId
     )
@@ -316,4 +330,167 @@ export async function getCover(env, coverId) {
 
 export async function deleteCover(env, coverId) {
   await env.DB.prepare('DELETE FROM covers WHERE id = ?').bind(coverId).run();
+}
+
+function throwIfUniqueFolderError(err) {
+  const msg = String(err?.message || err);
+  if (/unique/i.test(msg) || /constraint/i.test(msg)) {
+    const conflict = new Error('Folder name already exists');
+    conflict.code = 'DUPLICATE_FOLDER';
+    throw conflict;
+  }
+}
+
+/** Fetches a single folder row by ID. */
+export async function getFolder(env, folderId) {
+  return await env.DB.prepare('SELECT * FROM folders WHERE id = ?')
+    .bind(folderId)
+    .first();
+}
+
+/**
+ * Lists folders for a party/tab along with status-filtered counts and up to 4 preview posters.
+ */
+export async function getFolders(env, partyId, userId, tab, status = 'want') {
+  const safeStatus = status === 'watched' ? 'watched' : 'want';
+  let scopeSql = '';
+  let bindings = [];
+
+  if (tab === 'together') {
+    scopeSql = "f.party_id = ?1 AND f.kind = 'together' AND f.user_id IS NULL";
+    bindings = [partyId];
+  } else if (tab === 'mine') {
+    scopeSql = "f.party_id = ?1 AND f.kind = 'personal' AND f.user_id = ?2";
+    bindings = [partyId, userId];
+  } else if (tab === 'others') {
+    scopeSql = "f.party_id = ?1 AND f.kind = 'personal' AND f.user_id IS NOT NULL AND f.user_id != ?2";
+    bindings = [partyId, userId];
+  } else {
+    return [];
+  }
+
+  const folderRes = await env.DB.prepare(
+    `SELECT f.*, COALESCE(u.custom_name, u.first_name, 'Friend') AS owner_name
+     FROM folders f
+     LEFT JOIN users u ON u.id = f.user_id
+     WHERE ${scopeSql}
+     ORDER BY f.created_at DESC, f.id DESC`
+  )
+    .bind(...bindings)
+    .all();
+
+  const folders = folderRes.results || [];
+  if (folders.length === 0) return [];
+
+  const countsRes = await env.DB.prepare(
+    `SELECT folder_id,
+            COUNT(*) AS total_movie_count,
+            SUM(CASE WHEN status = ?1 THEN 1 ELSE 0 END) AS movie_count
+     FROM movies
+     WHERE party_id = ?2 AND folder_id IS NOT NULL
+     GROUP BY folder_id`
+  )
+    .bind(safeStatus, partyId)
+    .all();
+
+  const countsByFolder = new Map();
+  for (const row of countsRes.results || []) {
+    countsByFolder.set(row.folder_id, {
+      movie_count: Number(row.movie_count || 0),
+      total_movie_count: Number(row.total_movie_count || 0),
+    });
+  }
+
+  const postersRes = await env.DB.prepare(
+    `SELECT folder_id, poster
+     FROM movies
+     WHERE party_id = ?1 AND folder_id IS NOT NULL AND status = ?2
+       AND poster IS NOT NULL AND poster != ''
+     ORDER BY COALESCE(watched_at, created_at) DESC, id DESC`
+  )
+    .bind(partyId, safeStatus)
+    .all();
+
+  const postersByFolder = new Map();
+  for (const row of postersRes.results || []) {
+    let list = postersByFolder.get(row.folder_id);
+    if (!list) {
+      list = [];
+      postersByFolder.set(row.folder_id, list);
+    }
+    if (list.length < 4) list.push(row.poster);
+  }
+
+  return folders.map((f) => {
+    const counts = countsByFolder.get(f.id) || { movie_count: 0, total_movie_count: 0 };
+    return {
+      id: f.id,
+      party_id: f.party_id,
+      user_id: f.user_id,
+      kind: f.kind,
+      name: f.name,
+      color: f.color,
+      owner_name: f.user_id ? f.owner_name : null,
+      created_at: f.created_at,
+      movie_count: counts.movie_count,
+      total_movie_count: counts.total_movie_count,
+      preview_posters: postersByFolder.get(f.id) || [],
+    };
+  });
+}
+
+/** Creates a folder in the specified scope; throws DUPLICATE_FOLDER on conflict. */
+export async function createFolder(env, partyId, userId, data) {
+  const ownerId = data.kind === 'personal' ? userId : null;
+  try {
+    const res = await env.DB.prepare(
+      `INSERT INTO folders (party_id, user_id, kind, name, color)
+       VALUES (?1, ?2, ?3, ?4, ?5)`
+    )
+      .bind(partyId, ownerId, data.kind, data.name, data.color || '#D71921')
+      .run();
+    return await getFolder(env, res.meta.last_row_id);
+  } catch (err) {
+    throwIfUniqueFolderError(err);
+    throw err;
+  }
+}
+
+/** Updates folder name and/or color; throws DUPLICATE_FOLDER on conflict. */
+export async function updateFolder(env, folderId, data) {
+  const current = await getFolder(env, folderId);
+  if (!current) return null;
+
+  const name = data.name !== undefined ? data.name : current.name;
+  const color = data.color !== undefined ? data.color : current.color;
+  try {
+    await env.DB.prepare('UPDATE folders SET name = ?1, color = ?2 WHERE id = ?3')
+      .bind(name, color, folderId)
+      .run();
+    return await getFolder(env, folderId);
+  } catch (err) {
+    throwIfUniqueFolderError(err);
+    throw err;
+  }
+}
+
+/** Deletes a folder, optionally deleting contained movies and their custom covers. */
+export async function deleteFolder(env, folderId, deleteMovies = false) {
+  if (deleteMovies) {
+    const rows = await env.DB.prepare(
+      "SELECT poster FROM movies WHERE folder_id = ? AND poster LIKE '/api/covers/%'"
+    )
+      .bind(folderId)
+      .all();
+    for (const row of rows.results || []) {
+      const coverId = row.poster.slice('/api/covers/'.length);
+      await deleteCover(env, coverId);
+    }
+    await env.DB.prepare('DELETE FROM movies WHERE folder_id = ?').bind(folderId).run();
+  } else {
+    await env.DB.prepare('UPDATE movies SET folder_id = NULL WHERE folder_id = ?')
+      .bind(folderId)
+      .run();
+  }
+  await env.DB.prepare('DELETE FROM folders WHERE id = ?').bind(folderId).run();
 }
