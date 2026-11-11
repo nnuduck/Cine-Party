@@ -394,6 +394,7 @@ button {
   display: flex;
   flex-direction: column;
   width: 100%;
+  pointer-events: auto;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
@@ -421,11 +422,17 @@ button {
   border-color: var(--muted);
 }
 
+.card .poster-box img,
 .poster-box img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+  pointer-events: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .poster-ph {
@@ -1219,6 +1226,9 @@ textarea {
   overflow: hidden;
   border: 1px solid var(--border);
   background: var(--surface-2);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .detail-poster-wrap img {
@@ -1226,6 +1236,11 @@ textarea {
   height: 100%;
   object-fit: cover;
   display: block;
+  pointer-events: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .detail-heading {

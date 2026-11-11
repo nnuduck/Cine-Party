@@ -76,18 +76,44 @@ function cancelLongPress() {
   longPressState = null;
 }
 
-function triggerLongPressAction(target) {
-  if (target.classList.contains('folder-tile')) {
-    const folderId = Number(target.dataset.folderId);
-    const folder = state.folders.find((f) => f.id === folderId);
-    if (!folder) return false;
-    haptic('medium');
-    openFolderContextSheet(folder);
-    return true;
-  }
-  if (target.classList.contains('card')) {
+function startLongPress(e, action) {
+  cancelLongPress();
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const timer = setTimeout(() => {
+    longPressState = null;
+    if (action()) {
+      suppressNextClickUntil = Date.now() + 500;
+    }
+  }, 500);
+  longPressState = { startX, startY, timer };
+}
+
+function triggerFolderLongPress(tile) {
+  if (!tile || !tile.classList.contains('folder-tile')) return false;
+  const folderId = Number(tile.dataset.folderId);
+  const folder = state.folders.find((f) => f.id === folderId);
+  if (!folder) return false;
+  haptic('medium');
+  openFolderContextSheet(folder);
+  return true;
+}
+
+// ============================================
+// TEMPORARY (Sprint C1.5 -> replace in Sprint C2 with Drag & Drop):
+// Long-press on movie card opens Move-to-Folder context sheet.
+// When implementing Drag & Drop in C2, remove:
+// 1. This attachCardLongPress(card) function and its call in createCardEl()
+// 2. openMoveToFolderSheet(movie) below
+// Keep folder-tile long-press above and PATCH /api/movies/:id intact.
+// ============================================
+function attachCardLongPress(card) {
+  if (!card || card.dataset.lpBound) return;
+  card.dataset.lpBound = '1';
+
+  const triggerMove = () => {
     if (state.tab === 'others') return false;
-    const id = Number(target.dataset.id);
+    const id = Number(card.dataset.id);
     const movie = state.movies.find((m) => m.id === id);
     if (!movie) return false;
     const canEdit = movie.kind === 'together' || movie.added_by === state.me?.id;
@@ -95,28 +121,32 @@ function triggerLongPressAction(target) {
     haptic('medium');
     openMoveToFolderSheet(movie);
     return true;
-  }
-  return false;
+  };
+
+  card.addEventListener('pointerdown', (e) => {
+    if (!e.isPrimary) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (state.tab === 'others') return;
+    startLongPress(e, triggerMove);
+  });
+
+  card.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    cancelLongPress();
+    if (Date.now() < suppressNextClickUntil || currentOverlay) return;
+    if (triggerMove()) {
+      suppressNextClickUntil = Date.now() + 500;
+    }
+  });
 }
 
 document.body.addEventListener('pointerdown', (e) => {
   if (!e.isPrimary) return;
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   if (e.target.closest('.overlay')) return;
-  const target = e.target.closest('.folder-tile, .card');
-  if (!target) return;
-
-  cancelLongPress();
-  const startX = e.clientX;
-  const startY = e.clientY;
-  const timer = setTimeout(() => {
-    longPressState = null;
-    if (triggerLongPressAction(target)) {
-      suppressNextClickUntil = Date.now() + 500;
-    }
-  }, 500);
-
-  longPressState = { target, startX, startY, timer };
+  const tile = e.target.closest('.folder-tile');
+  if (!tile) return;
+  startLongPress(e, () => triggerFolderLongPress(tile));
 });
 
 document.body.addEventListener('pointermove', (e) => {
@@ -131,13 +161,20 @@ document.body.addEventListener('pointercancel', cancelLongPress);
 window.addEventListener('scroll', cancelLongPress, { passive: true });
 
 document.body.addEventListener('contextmenu', (e) => {
+  if (e.target.closest('.poster-viewer-overlay')) return;
+  if (e.target.closest('.detail-poster-wrap')) {
+    e.preventDefault();
+    return;
+  }
   if (e.target.closest('.overlay')) return;
-  const target = e.target.closest('.folder-tile, .card');
-  if (!target) return;
+  const tile = e.target.closest('.folder-tile');
+  if (!tile) return;
   e.preventDefault();
   cancelLongPress();
   if (Date.now() < suppressNextClickUntil || currentOverlay) return;
-  triggerLongPressAction(target);
+  if (triggerFolderLongPress(tile)) {
+    suppressNextClickUntil = Date.now() + 500;
+  }
 });
 
 document.body.addEventListener('click', (e) => {
@@ -834,7 +871,7 @@ function renderCard(m) {
       : '';
 
   const posterHtml = m.poster
-    ? `<img src="${esc(m.poster)}" alt="${esc(m.title)}" loading="lazy" onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('div'),{className:'poster-ph',textContent:'${esc(m.title)}'}))">`
+    ? `<img src="${esc(m.poster)}" alt="${esc(m.title)}" loading="lazy" draggable="false" onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('div'),{className:'poster-ph',textContent:'${esc(m.title)}'}))">`
     : `<div class="poster-ph">${esc(m.title)}</div>`;
 
   let meta = '';
@@ -911,7 +948,9 @@ function emptyStateHtml() {
 function createCardEl(m) {
   const tpl = document.createElement('template');
   tpl.innerHTML = renderCard(m).trim();
-  return tpl.content.firstElementChild;
+  const card = tpl.content.firstElementChild;
+  attachCardLongPress(card);
+  return card;
 }
 
 let filterSearchTimer = null;
@@ -1631,6 +1670,13 @@ function openFolderContextSheet(folder) {
   s.querySelector('#closeFolderCtxBtn').onclick = closeSheet;
 }
 
+// ============================================
+// TEMPORARY (Sprint C1.5 -> replace in Sprint C2 with Drag & Drop):
+// Move-to-folder bottom sheet used by card long-press.
+// In C2: replace with Drag & Drop onto folder tiles.
+// Can be cleanly removed together with attachCardLongPress() without touching
+// the backend API (PATCH /api/movies/:id stays the same for D&D).
+// ============================================
 async function openMoveToFolderSheet(movie) {
   let folders = [];
   if (
@@ -1732,7 +1778,7 @@ function openMovieDetail(movieId) {
 
   const canEdit = m.kind === 'together' || m.added_by === state.me.id;
   const posterHtml = m.poster
-    ? `<img src="${esc(m.poster)}" alt="${esc(m.title)}" onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('div'),{className:'poster-ph',textContent:'${esc(m.title)}'}))">`
+    ? `<img src="${esc(m.poster)}" alt="${esc(m.title)}" draggable="false" onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('div'),{className:'poster-ph',textContent:'${esc(m.title)}'}))">`
     : `<div class="poster-ph" style="padding:40px 10px;">${esc(m.title)}</div>`;
 
   const metaParts = [];
@@ -1791,11 +1837,12 @@ function openMovieDetail(movieId) {
     };
   });
 
-  const posterImg = s.querySelector('.detail-poster-wrap img');
-  if (posterImg && m.poster) {
-    posterImg.classList.add('detail-poster-clickable');
-    posterImg.style.cursor = 'pointer';
-    posterImg.onclick = () => {
+  const posterWrap = s.querySelector('.detail-poster-wrap');
+  if (posterWrap && posterWrap.querySelector('img') && m.poster) {
+    posterWrap.classList.add('detail-poster-clickable');
+    posterWrap.style.cursor = 'pointer';
+    posterWrap.onclick = () => {
+      if (!posterWrap.querySelector('img')) return;
       openPosterViewer(m.poster, m.title);
     };
   }
