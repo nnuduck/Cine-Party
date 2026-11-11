@@ -69,6 +69,7 @@ const $app = document.getElementById('app');
 
 let suppressNextClickUntil = 0;
 let longPressState = null;
+let activeCardPressCancel = null;
 
 function cancelLongPress() {
   if (!longPressState) return;
@@ -99,47 +100,6 @@ function triggerFolderLongPress(tile) {
   return true;
 }
 
-// ============================================
-// TEMPORARY (Sprint C1.5 -> replace in Sprint C2 with Drag & Drop):
-// Long-press on movie card opens Move-to-Folder context sheet.
-// When implementing Drag & Drop in C2, remove:
-// 1. This attachCardLongPress(card) function and its call in createCardEl()
-// 2. openMoveToFolderSheet(movie) below
-// Keep folder-tile long-press above and PATCH /api/movies/:id intact.
-// ============================================
-function attachCardLongPress(card) {
-  if (!card || card.dataset.lpBound) return;
-  card.dataset.lpBound = '1';
-
-  const triggerMove = () => {
-    if (state.tab === 'others') return false;
-    const id = Number(card.dataset.id);
-    const movie = state.movies.find((m) => m.id === id);
-    if (!movie) return false;
-    const canEdit = movie.kind === 'together' || movie.added_by === state.me?.id;
-    if (!canEdit) return false;
-    haptic('medium');
-    openMoveToFolderSheet(movie);
-    return true;
-  };
-
-  card.addEventListener('pointerdown', (e) => {
-    if (!e.isPrimary) return;
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    if (state.tab === 'others') return;
-    startLongPress(e, triggerMove);
-  });
-
-  card.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    cancelLongPress();
-    if (Date.now() < suppressNextClickUntil || currentOverlay) return;
-    if (triggerMove()) {
-      suppressNextClickUntil = Date.now() + 500;
-    }
-  });
-}
-
 document.body.addEventListener('pointerdown', (e) => {
   if (!e.isPrimary) return;
   if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -158,7 +118,10 @@ document.body.addEventListener('pointermove', (e) => {
 
 document.body.addEventListener('pointerup', cancelLongPress);
 document.body.addEventListener('pointercancel', cancelLongPress);
-window.addEventListener('scroll', cancelLongPress, { passive: true });
+window.addEventListener('scroll', () => {
+  cancelLongPress();
+  activeCardPressCancel?.();
+}, { passive: true });
 
 document.body.addEventListener('contextmenu', (e) => {
   if (e.target.closest('.poster-viewer-overlay')) return;
@@ -167,6 +130,10 @@ document.body.addEventListener('contextmenu', (e) => {
     return;
   }
   if (e.target.closest('.overlay')) return;
+  if (state.dragState || e.target.closest('.card')) {
+    e.preventDefault();
+    return;
+  }
   const tile = e.target.closest('.folder-tile');
   if (!tile) return;
   e.preventDefault();
@@ -241,6 +208,11 @@ function haptic(type = 'light') {
 function hapticNotice(type = 'success') {
   try { tg?.HapticFeedback?.notificationOccurred?.(type); } catch {}
 }
+
+const DRAG_LONG_PRESS_MS = 500;
+const DRAG_MOVE_THRESHOLD_PX = 8;
+const DRAG_EDGE_SCROLL_ZONE = 80;
+const DRAG_EDGE_SCROLL_SPEED = 8;
 
 function toast(msg) {
   const el = document.getElementById('toast');
@@ -594,6 +566,7 @@ const state = {
   sortBy: 'date', // 'date' | 'alpha_asc' | 'alpha_desc'
   searchQuery: '', // active text search query
   loading: true,
+  dragState: null, // { movieId, sourceEl, ghostEl, startX, startY, lastX, lastY, pointerId, offsetX, offsetY, overFolderId }
 };
 
 function parseTags(raw) {
@@ -949,7 +922,7 @@ function createCardEl(m) {
   const tpl = document.createElement('template');
   tpl.innerHTML = renderCard(m).trim();
   const card = tpl.content.firstElementChild;
-  attachCardLongPress(card);
+  attachCardDrag(card, m);
   return card;
 }
 
@@ -1223,6 +1196,9 @@ function switchStatus(newStatus) {
 }
 
 function render() {
+  if (state.dragState) {
+    handleDragCancel();
+  }
   const scrollY = window.scrollY;
 
   if (state.loading) {
@@ -1670,105 +1646,330 @@ function openFolderContextSheet(folder) {
   s.querySelector('#closeFolderCtxBtn').onclick = closeSheet;
 }
 
-// ============================================
-// TEMPORARY (Sprint C1.5 -> replace in Sprint C2 with Drag & Drop):
-// Move-to-folder bottom sheet used by card long-press.
-// In C2: replace with Drag & Drop onto folder tiles.
-// Can be cleanly removed together with attachCardLongPress() without touching
-// the backend API (PATCH /api/movies/:id stays the same for D&D).
-// ============================================
-async function openMoveToFolderSheet(movie) {
-  let folders = [];
-  if (
-    (movie.kind === 'together' && state.tab === 'together') ||
-    (movie.kind === 'personal' && state.tab === 'mine')
-  ) {
-    folders = state.folders;
-  } else {
-    try {
-      const targetTab = movie.kind === 'personal' ? 'mine' : 'together';
-      const data = await api(
-        `/parties/${state.partyId}/folders?tab=${targetTab}&status=${encodeURIComponent(state.status)}`
-      );
-      folders = data.folders || [];
-    } catch {
-      toast('Failed to load folders');
-      return;
+// ---------- Drag & Drop Movies to Folders ----------
+let dragScrollRAF = null;
+let dragScrollDir = 0;
+
+function getCurrentScopeFolders() {
+  return (state.folders || []).filter((f) => {
+    if (state.tab === 'together') return f.kind === 'together';
+    if (state.tab === 'mine') return f.kind === 'personal' && f.user_id === state.me?.id;
+    return false;
+  });
+}
+
+function attachCardDrag(card, movie) {
+  if (!card || !movie || card.dataset.dragBound) return;
+  if (state.tab === 'others') return;
+  const canEdit = movie.kind === 'together' || movie.added_by === state.me?.id;
+  if (!canEdit) return;
+
+  card.dataset.dragBound = '1';
+
+  let pressTimer = null;
+  let started = false;
+  let activePointerId = null;
+  let startX = 0;
+  let startY = 0;
+
+  const cancelPendingPress = () => {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+    if (activeCardPressCancel === cancelPendingPress) {
+      activeCardPressCancel = null;
+    }
+    activePointerId = null;
+  };
+
+  const onPointerDown = (e) => {
+    if (!e.isPrimary) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (e.target.closest('.poster-viewer-overlay') || e.target.closest('.folder-tile')) return;
+    if (state.dragState || currentOverlay) return;
+
+    cancelPendingPress();
+    activePointerId = e.pointerId;
+    startX = e.clientX;
+    startY = e.clientY;
+    started = false;
+    activeCardPressCancel = cancelPendingPress;
+
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+      if (activeCardPressCancel === cancelPendingPress) {
+        activeCardPressCancel = null;
+      }
+      started = true;
+      suppressNextClickUntil = Date.now() + 500;
+      const latestMovie = state.movies.find((x) => x.id === movie.id) || movie;
+      beginDrag(latestMovie, card, e.clientX, e.clientY, e.pointerId);
+    }, DRAG_LONG_PRESS_MS);
+  };
+
+  const onPointerMove = (e) => {
+    if (!pressTimer || started) return;
+    if (e.pointerId !== activePointerId) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (dx * dx + dy * dy > DRAG_MOVE_THRESHOLD_PX * DRAG_MOVE_THRESHOLD_PX) {
+      cancelPendingPress();
+    }
+  };
+
+  const onPointerUp = (e) => {
+    if (activePointerId !== null && e.pointerId !== activePointerId) return;
+    if (started && !state.dragState) {
+      suppressNextClickUntil = Date.now() + 450;
+    }
+    cancelPendingPress();
+  };
+
+  card.addEventListener('pointerdown', onPointerDown);
+  card.addEventListener('pointermove', onPointerMove);
+  card.addEventListener('pointerup', onPointerUp);
+  card.addEventListener('pointercancel', onPointerUp);
+  card.addEventListener('pointerleave', onPointerUp);
+}
+
+function beginDrag(movie, sourceEl, startX, startY, pointerId) {
+  if (state.dragState || state.tab === 'others') return;
+
+  const folders = getCurrentScopeFolders();
+  if (!folders.length) {
+    toast('Create a folder first');
+    return;
+  }
+  if (state.selectedFolder || !document.querySelector('.folder-tile')) {
+    return;
+  }
+
+  haptic('medium');
+
+  const rect = sourceEl.getBoundingClientRect();
+  const ghost = sourceEl.cloneNode(true);
+  ghost.className = 'card drag-ghost';
+  ghost.style.width = `${rect.width}px`;
+  ghost.style.height = `${rect.height}px`;
+  ghost.style.left = `${rect.left}px`;
+  ghost.style.top = `${rect.top}px`;
+  ghost.style.transform = 'scale(1)';
+  document.body.appendChild(ghost);
+  requestAnimationFrame(() => {
+    if (state.dragState?.ghostEl === ghost) {
+      ghost.style.transform = 'scale(1.05)';
+    }
+  });
+
+  sourceEl.classList.add('drag-source-active');
+  document.body.classList.add('dragging');
+
+  state.dragState = {
+    movieId: movie.id,
+    sourceEl,
+    ghostEl: ghost,
+    startX,
+    startY,
+    lastX: startX,
+    lastY: startY,
+    pointerId,
+    offsetX: startX - rect.left,
+    offsetY: startY - rect.top,
+    overFolderId: null,
+  };
+
+  document.addEventListener('pointermove', handleDragMove, { passive: false });
+  document.addEventListener('touchmove', handleDragTouchMove, { passive: false });
+  document.addEventListener('pointerup', handleDragEnd);
+  document.addEventListener('pointercancel', handleDragCancel);
+  document.addEventListener('keydown', handleDragEscape);
+}
+
+function updateDragFolderHover(ds, clientX, clientY) {
+  const folders = getCurrentScopeFolders();
+  let overFolder = null;
+  for (const f of folders) {
+    const tile = document.querySelector(`.folder-tile[data-folder-id="${f.id}"]`);
+    if (!tile) continue;
+    const r = tile.getBoundingClientRect();
+    if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+      overFolder = f;
+      break;
     }
   }
 
-  const s = openSheet(`
-    <h2 class="sheet-title display">Move "${esc(movie.title)}"</h2>
-    <div style="color:var(--muted); font-size:13px; margin-bottom:16px;">
-      Choose a ${movie.kind === 'personal' ? 'Personal' : 'Together'} folder.
-    </div>
-    <div class="action-stack full-width">
-      ${movie.folder_id ? `<button type="button" class="btn" id="removeFromFolderBtn">Remove from folder</button>` : ''}
-      ${folders
-        .map((f) => {
-          const isCurrent = movie.folder_id === f.id;
-          return `
-            <button type="button" class="btn ${isCurrent ? 'primary' : ''}" data-move-folder-id="${f.id}" ${isCurrent ? 'disabled' : ''}>
-              <span class="folder-crumb-dot" style="background:${esc(f.color)};"></span>
-              <span>${esc(f.name)}${isCurrent ? ' (current)' : ''}</span>
-            </button>
-          `;
-        })
-        .join('')}
-      <button type="button" class="btn primary" id="createMoveFolderBtn">+ Create new folder</button>
-      <button type="button" class="btn" id="cancelMoveFolderBtn">Cancel</button>
-    </div>
-  `);
+  document.querySelectorAll('.folder-tile').forEach((t) => {
+    const id = Number(t.dataset.folderId);
+    t.classList.toggle('drag-hover', Boolean(overFolder && overFolder.id === id));
+  });
+  ds.overFolderId = overFolder ? overFolder.id : null;
+}
 
-  s.querySelector('#cancelMoveFolderBtn').onclick = closeSheet;
+function handleDragTouchMove(e) {
+  if (state.dragState && e.cancelable) {
+    e.preventDefault();
+  }
+}
 
-  const removeBtn = s.querySelector('#removeFromFolderBtn');
-  if (removeBtn) {
-    removeBtn.onclick = async () => {
-      removeBtn.disabled = true;
-      try {
-        await api(`/movies/${movie.id}`, { method: 'PATCH', body: { folder_id: null } });
-        hapticNotice('success');
-        closeSheet();
-        await loadPartyMovies();
-        render();
-        toast('Removed from folder');
-      } catch (err) {
-        toast(err.message || 'Failed to move movie');
-        removeBtn.disabled = false;
-      }
-    };
+function handleDragMove(e) {
+  const ds = state.dragState;
+  if (!ds || e.pointerId !== ds.pointerId) return;
+  if (e.cancelable) e.preventDefault();
+
+  ds.lastX = e.clientX;
+  ds.lastY = e.clientY;
+  ds.ghostEl.style.left = `${e.clientX - ds.offsetX}px`;
+  ds.ghostEl.style.top = `${e.clientY - ds.offsetY}px`;
+
+  const viewH = window.innerHeight;
+  let dir = 0;
+  if (e.clientY < DRAG_EDGE_SCROLL_ZONE) dir = -1;
+  else if (e.clientY > viewH - DRAG_EDGE_SCROLL_ZONE) dir = 1;
+
+  if (dir !== dragScrollDir) {
+    dragScrollDir = dir;
+    if (dragScrollRAF) {
+      cancelAnimationFrame(dragScrollRAF);
+      dragScrollRAF = null;
+    }
+    if (dir !== 0) tickDragScroll();
   }
 
-  s.querySelectorAll('[data-move-folder-id]').forEach((btn) => {
-    btn.onclick = async () => {
-      const targetId = Number(btn.dataset.moveFolderId);
-      btn.disabled = true;
-      try {
-        await api(`/movies/${movie.id}`, { method: 'PATCH', body: { folder_id: targetId } });
-        hapticNotice('success');
-        closeSheet();
-        await loadPartyMovies();
-        render();
-        const targetFolder = folders.find((x) => x.id === targetId);
-        toast(targetFolder ? `Moved to "${targetFolder.name}"` : 'Moved to folder');
-      } catch (err) {
-        toast(err.message || 'Failed to move movie');
-        btn.disabled = false;
-      }
-    };
-  });
+  updateDragFolderHover(ds, e.clientX, e.clientY);
+}
 
-  s.querySelector('#createMoveFolderBtn').onclick = () => {
-    closeSheet();
-    openFolderEditor(null, {
-      kind: movie.kind,
-      onCreated: async (newFolder) => {
-        await api(`/movies/${movie.id}`, { method: 'PATCH', body: { folder_id: newFolder.id } });
-        toast(`Moved to "${newFolder.name}"`);
-      },
+function tickDragScroll() {
+  const ds = state.dragState;
+  if (!ds || dragScrollDir === 0) return;
+  window.scrollBy(0, dragScrollDir * DRAG_EDGE_SCROLL_SPEED);
+  updateDragFolderHover(ds, ds.lastX, ds.lastY);
+  dragScrollRAF = requestAnimationFrame(tickDragScroll);
+}
+
+function cleanupDragSession() {
+  const ds = state.dragState;
+  document.removeEventListener('pointermove', handleDragMove);
+  document.removeEventListener('touchmove', handleDragTouchMove);
+  document.removeEventListener('pointerup', handleDragEnd);
+  document.removeEventListener('pointercancel', handleDragCancel);
+  document.removeEventListener('keydown', handleDragEscape);
+  if (dragScrollRAF) {
+    cancelAnimationFrame(dragScrollRAF);
+    dragScrollRAF = null;
+  }
+  dragScrollDir = 0;
+  document.querySelectorAll('.folder-tile').forEach((t) => t.classList.remove('drag-hover'));
+  document.body.classList.remove('dragging');
+  state.dragState = null;
+  suppressNextClickUntil = Date.now() + 450;
+  return ds;
+}
+
+async function handleDragEnd(e) {
+  const active = state.dragState;
+  if (!active || e.pointerId !== active.pointerId) return;
+
+  const ds = cleanupDragSession();
+  if (!ds) return;
+
+  if (ds.overFolderId != null) {
+    await dropIntoFolder(ds, ds.overFolderId);
+  } else {
+    cancelDrag(ds);
+  }
+}
+
+function handleDragCancel(e) {
+  const active = state.dragState;
+  if (!active) return;
+  if (e && e.pointerId !== undefined && e.pointerId !== active.pointerId) return;
+  const ds = cleanupDragSession();
+  if (ds) cancelDrag(ds);
+}
+
+function handleDragEscape(e) {
+  if (e.key === 'Escape' && state.dragState) {
+    handleDragCancel();
+  }
+}
+
+function cancelDrag(ds) {
+  if (!ds?.ghostEl) return;
+  if (!ds.sourceEl?.isConnected) {
+    ds.ghostEl.remove();
+    return;
+  }
+
+  const srcRect = ds.sourceEl.getBoundingClientRect();
+  ds.ghostEl.style.transition =
+    'left 0.25s cubic-bezier(0.16, 1, 0.3, 1), top 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease-out';
+  ds.ghostEl.style.left = `${srcRect.left}px`;
+  ds.ghostEl.style.top = `${srcRect.top}px`;
+  ds.ghostEl.style.transform = 'scale(1)';
+  ds.ghostEl.style.opacity = '1';
+
+  setTimeout(() => {
+    ds.ghostEl.remove();
+    ds.sourceEl.classList.remove('drag-source-active');
+  }, 260);
+
+  haptic('light');
+}
+
+async function dropIntoFolder(ds, folderId) {
+  const tile = document.querySelector(`.folder-tile[data-folder-id="${folderId}"]`);
+  if (!tile) {
+    cancelDrag(ds);
+    return;
+  }
+
+  hapticNotice('success');
+
+  const tileRect = tile.getBoundingClientRect();
+  const folderCenterX = tileRect.left + tileRect.width / 2;
+  const folderCenterY = tileRect.top + tileRect.height / 2;
+  const ghostW = ds.ghostEl.offsetWidth || 160;
+  const ghostH = ds.ghostEl.offsetHeight || 240;
+
+  ds.ghostEl.style.transition =
+    'left 0.3s cubic-bezier(0.16, 1, 0.3, 1), top 0.3s cubic-bezier(0.16, 1, 0.3, 1), transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease-in';
+  ds.ghostEl.style.left = `${folderCenterX - ghostW / 2}px`;
+  ds.ghostEl.style.top = `${folderCenterY - ghostH / 2}px`;
+  ds.ghostEl.style.transform = 'scale(0.2)';
+  ds.ghostEl.style.opacity = '0';
+
+  ds.sourceEl.style.transition = 'opacity 0.2s ease-out';
+  ds.sourceEl.style.opacity = '0';
+
+  setTimeout(() => {
+    ds.ghostEl.remove();
+  }, 320);
+
+  const movie = state.movies.find((m) => m.id === ds.movieId);
+  if (movie) movie.folder_id = folderId;
+
+  try {
+    await api(`/movies/${ds.movieId}`, {
+      method: 'PATCH',
+      body: { folder_id: folderId },
     });
-  };
+
+    await loadPartyMovies();
+    render();
+
+    const folder = state.folders.find((f) => f.id === folderId);
+    toast(`Moved to ${folder?.name || 'folder'}`);
+  } catch (e) {
+    if (ds.sourceEl.isConnected) {
+      ds.sourceEl.classList.remove('drag-source-active');
+      ds.sourceEl.style.opacity = '';
+      ds.sourceEl.style.transition = '';
+    }
+    toast(e.message || 'Failed to move');
+    await loadPartyMovies();
+    render();
+  }
 }
 
 // ---------- Movie Detail Sheet ----------
@@ -3074,6 +3275,7 @@ function startPolling() {
   pollTimer = setInterval(async () => {
     if (isPolling) return; // защита от параллельного запуска
     if (pendingMutationsCount > 0) return; // не перезаписывать данные во время мутаций
+    if (state.dragState) return; // не обновлять DOM во время drag & drop
     if (document.visibilityState !== 'visible') return;
     if (currentOverlay) return; // не мешаем открытым sheet
     isPolling = true;
