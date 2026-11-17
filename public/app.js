@@ -165,7 +165,7 @@ document.body.addEventListener('click', (e) => {
   if (backBtn) {
     state.selectedFolder = null;
     haptic('light');
-    render();
+    render({ preserveScroll: false });
     return;
   }
 
@@ -179,7 +179,7 @@ document.body.addEventListener('click', (e) => {
       state.selectedTag = null;
     }
     haptic('light');
-    render();
+    render({ preserveScroll: false });
     return;
   }
 
@@ -435,6 +435,9 @@ async function api(path, { method = 'GET', body } = {}) {
 let currentOverlay = null;
 let backButtonBound = false;
 let onSheetClose = null;
+let activeDialogOverlay = null;
+let dialogBackButtonBound = false;
+let onDialogClose = null;
 
 function openSheet(contentHtml) {
   closeSheet();
@@ -463,6 +466,9 @@ function closeSheet() {
   if (activePosterViewer) {
     closePosterViewer();
   }
+  if (activeDialogOverlay) {
+    closeDialogSheet();
+  }
   if (currentOverlay) {
     currentOverlay.remove();
     currentOverlay = null;
@@ -481,9 +487,63 @@ function closeSheet() {
   }
 }
 
+function openDialogSheet(contentHtml) {
+  closeDialogSheet();
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay dialog-overlay';
+  overlay.innerHTML = `<div class="sheet"><div class="drag-handle"></div>${contentHtml}</div>`;
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeDialogSheet();
+  });
+
+  document.body.appendChild(overlay);
+  activeDialogOverlay = overlay;
+
+  if (tg?.BackButton) {
+    if (backButtonBound) {
+      tg.BackButton.offClick(closeSheet);
+      backButtonBound = false;
+    }
+    tg.BackButton.show();
+    if (!dialogBackButtonBound) {
+      tg.BackButton.onClick(closeDialogSheet);
+      dialogBackButtonBound = true;
+    }
+  }
+  return overlay.querySelector('.sheet');
+}
+
+function closeDialogSheet() {
+  if (activeDialogOverlay) {
+    activeDialogOverlay.remove();
+    activeDialogOverlay = null;
+  }
+  if (tg?.BackButton) {
+    if (dialogBackButtonBound) {
+      tg.BackButton.offClick(closeDialogSheet);
+      dialogBackButtonBound = false;
+    }
+    if (currentOverlay && !activePosterViewer) {
+      if (!backButtonBound) {
+        tg.BackButton.onClick(closeSheet);
+        backButtonBound = true;
+      }
+      tg.BackButton.show();
+    } else if (!activePosterViewer) {
+      tg.BackButton.hide();
+    }
+  }
+  if (onDialogClose) {
+    const cb = onDialogClose;
+    onDialogClose = null;
+    cb();
+  }
+}
+
 function confirmSheet({ title, message, confirmText = 'Delete', cancelText = 'Cancel' }) {
   return new Promise((resolve) => {
-    const s = openSheet(`
+    const s = openDialogSheet(`
       <h2 class="sheet-title display">${esc(title)}</h2>
       <div style="color:var(--muted); font-size:14px; line-height:1.5; margin-bottom:20px;">
         ${esc(message)}
@@ -497,13 +557,13 @@ function confirmSheet({ title, message, confirmText = 'Delete', cancelText = 'Ca
     const finish = (val) => {
       if (resolved) return;
       resolved = true;
-      onSheetClose = null;
-      closeSheet();
+      onDialogClose = null;
+      closeDialogSheet();
       resolve(val);
     };
     s.querySelector('#confirmYes').onclick = () => finish(true);
     s.querySelector('#confirmNo').onclick = () => finish(false);
-    onSheetClose = () => {
+    onDialogClose = () => {
       if (!resolved) {
         resolved = true;
         resolve(false);
@@ -514,7 +574,7 @@ function confirmSheet({ title, message, confirmText = 'Delete', cancelText = 'Ca
 
 function promptSheet({ title, message, placeholder = '', initialValue = '' }) {
   return new Promise((resolve) => {
-    const s = openSheet(`
+    const s = openDialogSheet(`
       <h2 class="sheet-title display">${esc(title)}</h2>
       <div style="color:var(--muted); font-size:14px; line-height:1.4; margin-bottom:16px;">
         ${esc(message || '')}
@@ -529,8 +589,8 @@ function promptSheet({ title, message, placeholder = '', initialValue = '' }) {
     const finish = (val) => {
       if (resolved) return;
       resolved = true;
-      onSheetClose = null;
-      closeSheet();
+      onDialogClose = null;
+      closeDialogSheet();
       resolve(val);
     };
     const inp = s.querySelector('#promptInput');
@@ -541,7 +601,7 @@ function promptSheet({ title, message, placeholder = '', initialValue = '' }) {
       if (e.key === 'Enter') finish(inp.value);
       if (e.key === 'Escape') finish(null);
     });
-    onSheetClose = () => {
+    onDialogClose = () => {
       if (!resolved) {
         resolved = true;
         resolve(null);
@@ -595,6 +655,7 @@ function parseTags(raw) {
 
 function tabMovies() {
   const myId = state.me?.id;
+  const memberIds = new Set((currentParty()?.members || []).map((x) => x.id));
   return state.movies.filter((m) => {
     if (m.status !== state.status) return false;
     if (state.tab === 'together') return m.kind === 'together';
@@ -604,7 +665,11 @@ function tabMovies() {
       }
       return m.kind === 'personal' && m.added_by === myId;
     }
-    return m.kind === 'personal' && m.added_by !== myId;
+    return (
+      m.kind === 'personal' &&
+      m.added_by !== myId &&
+      (memberIds.size === 0 || memberIds.has(m.added_by))
+    );
   });
 }
 
@@ -628,9 +693,10 @@ const currentParty = () => state.parties.find((p) => p.id === state.partyId);
 const otherMemberName = () => {
   const p = currentParty();
   if (!p) return 'Friend';
-  const others = (p.members || []).filter((m) => m.id !== state.me.id);
+  const myId = state.me?.id;
+  const others = (p.members || []).filter((m) => m.id !== myId);
   if (others.length === 1) {
-    return others[0].first_name || 'Friend';
+    return others[0].name || others[0].first_name || 'Friend';
   }
   return 'Others';
 };
@@ -844,7 +910,7 @@ function renderCard(m) {
       : '';
 
   const posterHtml = m.poster
-    ? `<img src="${esc(m.poster)}" alt="${esc(m.title)}" loading="lazy" draggable="false" onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('div'),{className:'poster-ph',textContent:'${esc(m.title)}'}))">`
+    ? `<img src="${esc(m.poster)}" alt="${esc(m.title)}" loading="lazy" draggable="false" onerror="this.onerror=null;const d=document.createElement('div');d.className='poster-ph';d.textContent=this.alt;this.replaceWith(d);">`
     : `<div class="poster-ph">${esc(m.title)}</div>`;
 
   let meta = '';
@@ -1037,6 +1103,36 @@ function refreshMoviesContainer() {
   while (grid.children.length > list.length) {
     grid.lastElementChild.remove();
   }
+
+  syncTagFilterBar();
+}
+
+function renderTagFilterBarMarkup(tagsList) {
+  if (!tagsList.length) return '';
+  return `
+    <div class="tag-filter-bar" id="tagFilterBar">
+      <button type="button" class="tag-filter-chip ${!state.selectedTag ? 'active' : ''}" data-tag="">All</button>
+      ${tagsList
+        .map(
+          ([t, count]) => `
+            <button type="button" class="tag-filter-chip ${state.selectedTag === t ? 'active' : ''}" data-tag="${esc(t)}">
+              ${esc(t)} <span class="tag-chip-count">${count}</span>
+            </button>
+          `
+        )
+        .join('')}
+    </div>
+  `;
+}
+
+function syncTagFilterBar() {
+  const host = $app.querySelector('#tagFilterHost');
+  if (!host) return;
+  const tagsList = partyTags();
+  if (state.selectedTag && !tagsList.some(([t]) => t === state.selectedTag)) {
+    state.selectedTag = null;
+  }
+  host.innerHTML = renderTagFilterBarMarkup(tagsList);
 }
 
 function renderFilterSection() {
@@ -1074,24 +1170,7 @@ function renderFilterSection() {
           </div>
         </div>
       </div>
-      ${
-        tagsList.length
-          ? `
-            <div class="tag-filter-bar" id="tagFilterBar">
-              <button type="button" class="tag-filter-chip ${!state.selectedTag ? 'active' : ''}" data-tag="">All</button>
-              ${tagsList
-                .map(
-                  ([t, count]) => `
-                    <button type="button" class="tag-filter-chip ${state.selectedTag === t ? 'active' : ''}" data-tag="${esc(t)}">
-                      ${esc(t)} <span class="tag-chip-count">${count}</span>
-                    </button>
-                  `
-                )
-                .join('')}
-            </div>
-          `
-          : ''
-      }
+      <div id="tagFilterHost">${renderTagFilterBarMarkup(tagsList)}</div>
     </div>
   `;
 }
@@ -1101,6 +1180,7 @@ function bindFilterEvents() {
   const clearBtn = $app.querySelector('#listSearchClear');
   const sortBtn = $app.querySelector('#sortBtn');
   const sortDropdown = $app.querySelector('#sortDropdown');
+  const tagFilterHost = $app.querySelector('#tagFilterHost');
 
   if (input) {
     input.oninput = (e) => {
@@ -1153,18 +1233,20 @@ function bindFilterEvents() {
     });
   }
 
-  $app.querySelectorAll('#tagFilterBar .tag-filter-chip').forEach((chip) => {
-    chip.onclick = () => {
+  if (tagFilterHost) {
+    tagFilterHost.onclick = (e) => {
+      const chip = e.target.closest('.tag-filter-chip');
+      if (!chip) return;
       const tag = chip.dataset.tag || null;
       state.selectedTag = state.selectedTag === tag ? null : tag;
       haptic('light');
-      $app.querySelectorAll('#tagFilterBar .tag-filter-chip').forEach((c) => {
+      tagFilterHost.querySelectorAll('.tag-filter-chip').forEach((c) => {
         const isAll = !c.dataset.tag;
         c.classList.toggle('active', isAll ? !state.selectedTag : c.dataset.tag === state.selectedTag);
       });
       refreshMoviesContainer();
     };
-  });
+  }
 }
 
 function switchTab(newTab) {
@@ -1176,7 +1258,7 @@ function switchTab(newTab) {
   if (state.selectedTag && !availableTags.includes(state.selectedTag)) {
     state.selectedTag = null;
   }
-  render();
+  render({ preserveScroll: false });
   loadPartyFolders().then(() => {
     refreshMoviesContainer();
   }).catch(() => {});
@@ -1189,13 +1271,13 @@ function switchStatus(newStatus) {
   if (state.selectedTag && !tagsInNewStatus.includes(state.selectedTag)) {
     state.selectedTag = null;
   }
-  render();
+  render({ preserveScroll: false });
   loadPartyFolders().then(() => {
     refreshMoviesContainer();
   }).catch(() => {});
 }
 
-function render() {
+function render({ preserveScroll = true } = {}) {
   if (state.dragState) {
     handleDragCancel();
   }
@@ -1341,8 +1423,10 @@ function render() {
     };
   });
 
-  if (scrollY > 0) {
+  if (preserveScroll && scrollY > 0) {
     window.scrollTo(0, scrollY);
+  } else if (!preserveScroll) {
+    window.scrollTo(0, 0);
   }
 }
 
@@ -1561,6 +1645,7 @@ function openDeleteFolderSheet(folder) {
       await api(`/folders/${folder.id}?deleteMovies=true`, { method: 'DELETE' });
       if (state.selectedFolder === folder.id) state.selectedFolder = null;
       hapticNotice('success');
+      closeSheet();
       await loadPartyMovies();
       render();
       toast('Folder and movies deleted');
@@ -1635,6 +1720,7 @@ function openFolderContextSheet(folder) {
       await api(`/folders/${folder.id}?deleteMovies=false`, { method: 'DELETE' });
       if (state.selectedFolder === folder.id) state.selectedFolder = null;
       hapticNotice('success');
+      closeSheet();
       await loadPartyMovies();
       render();
       toast('Folder deleted');
@@ -1733,32 +1819,62 @@ function attachCardDrag(card, movie) {
   card.addEventListener('pointerleave', onPointerUp);
 }
 
+function createCoverGhost(sourceEl, movie) {
+  const posterEl = sourceEl.querySelector('.poster-box') || sourceEl;
+  const ghost = document.createElement('div');
+  ghost.className = 'drag-ghost';
+  const img = posterEl.querySelector('img');
+  if (img) {
+    ghost.appendChild(img.cloneNode(false));
+  } else {
+    const ph = posterEl.querySelector('.poster-ph');
+    if (ph) {
+      ghost.appendChild(ph.cloneNode(true));
+    } else {
+      const div = document.createElement('div');
+      div.className = 'poster-ph';
+      div.textContent = movie.title || '';
+      ghost.appendChild(div);
+    }
+  }
+  return { posterEl, ghost };
+}
+
 function beginDrag(movie, sourceEl, startX, startY, pointerId) {
   if (state.dragState || state.tab === 'others') return;
-
-  const folders = getCurrentScopeFolders();
-  if (!folders.length) {
-    toast('Create a folder first');
+  if (state.tab === 'mine' && movie.kind === 'together') {
+    toast('Switch to Together tab to move shared movies');
     return;
   }
-  if (state.selectedFolder || !document.querySelector('.folder-tile')) {
-    return;
+  if (state.tab === 'together' && movie.kind !== 'together') return;
+
+  if (state.selectedFolder) {
+    if (!document.querySelector('#folderBreadcrumb .folder-breadcrumb')) return;
+  } else {
+    const folders = getCurrentScopeFolders();
+    if (!folders.length) {
+      toast('Create a folder first');
+      return;
+    }
+    if (!document.querySelector('.folder-tile')) return;
   }
 
   haptic('medium');
 
-  const rect = sourceEl.getBoundingClientRect();
-  const ghost = sourceEl.cloneNode(true);
-  ghost.className = 'card drag-ghost';
+  const { posterEl, ghost } = createCoverGhost(sourceEl, movie);
+  const rect = posterEl.getBoundingClientRect();
+  const offsetX = Math.min(Math.max(startX - rect.left, 16), Math.max(16, rect.width - 16));
+  const offsetY = Math.min(Math.max(startY - rect.top, 16), Math.max(16, rect.height - 16));
+
   ghost.style.width = `${rect.width}px`;
   ghost.style.height = `${rect.height}px`;
-  ghost.style.left = `${rect.left}px`;
-  ghost.style.top = `${rect.top}px`;
+  ghost.style.left = `${startX - offsetX}px`;
+  ghost.style.top = `${startY - offsetY}px`;
   ghost.style.transform = 'scale(1)';
   document.body.appendChild(ghost);
   requestAnimationFrame(() => {
     if (state.dragState?.ghostEl === ghost) {
-      ghost.style.transform = 'scale(1.05)';
+      ghost.style.transform = 'scale(1.04)';
     }
   });
 
@@ -1774,9 +1890,10 @@ function beginDrag(movie, sourceEl, startX, startY, pointerId) {
     lastX: startX,
     lastY: startY,
     pointerId,
-    offsetX: startX - rect.left,
-    offsetY: startY - rect.top,
+    offsetX,
+    offsetY,
     overFolderId: null,
+    overRoot: false,
   };
 
   document.addEventListener('pointermove', handleDragMove, { passive: false });
@@ -1787,6 +1904,20 @@ function beginDrag(movie, sourceEl, startX, startY, pointerId) {
 }
 
 function updateDragFolderHover(ds, clientX, clientY) {
+  const crumb = document.querySelector('#folderBreadcrumb .folder-breadcrumb');
+  if (state.selectedFolder) {
+    let overRoot = false;
+    if (crumb) {
+      const r = crumb.getBoundingClientRect();
+      overRoot = clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+      crumb.classList.toggle('drag-hover', overRoot);
+    }
+    ds.overRoot = overRoot;
+    ds.overFolderId = null;
+    return;
+  }
+
+  if (crumb) crumb.classList.remove('drag-hover');
   const folders = getCurrentScopeFolders();
   let overFolder = null;
   for (const f of folders) {
@@ -1804,6 +1935,7 @@ function updateDragFolderHover(ds, clientX, clientY) {
     t.classList.toggle('drag-hover', Boolean(overFolder && overFolder.id === id));
   });
   ds.overFolderId = overFolder ? overFolder.id : null;
+  ds.overRoot = false;
 }
 
 function handleDragTouchMove(e) {
@@ -1860,6 +1992,7 @@ function cleanupDragSession() {
   }
   dragScrollDir = 0;
   document.querySelectorAll('.folder-tile').forEach((t) => t.classList.remove('drag-hover'));
+  document.querySelector('#folderBreadcrumb .folder-breadcrumb')?.classList.remove('drag-hover');
   document.body.classList.remove('dragging');
   state.dragState = null;
   suppressNextClickUntil = Date.now() + 450;
@@ -1875,6 +2008,8 @@ async function handleDragEnd(e) {
 
   if (ds.overFolderId != null) {
     await dropIntoFolder(ds, ds.overFolderId);
+  } else if (ds.overRoot) {
+    await dropOutToRoot(ds);
   } else {
     cancelDrag(ds);
   }
@@ -1901,7 +2036,8 @@ function cancelDrag(ds) {
     return;
   }
 
-  const srcRect = ds.sourceEl.getBoundingClientRect();
+  const posterEl = ds.sourceEl.querySelector('.poster-box') || ds.sourceEl;
+  const srcRect = posterEl.getBoundingClientRect();
   ds.ghostEl.style.transition =
     'left 0.25s cubic-bezier(0.16, 1, 0.3, 1), top 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease-out';
   ds.ghostEl.style.left = `${srcRect.left}px`;
@@ -1917,25 +2053,24 @@ function cancelDrag(ds) {
   haptic('light');
 }
 
-async function dropIntoFolder(ds, folderId) {
-  const tile = document.querySelector(`.folder-tile[data-folder-id="${folderId}"]`);
-  if (!tile) {
+async function moveMovieFolderWithDropAnim(ds, targetEl, folderId, successMessage) {
+  if (!targetEl) {
     cancelDrag(ds);
     return;
   }
 
   hapticNotice('success');
 
-  const tileRect = tile.getBoundingClientRect();
-  const folderCenterX = tileRect.left + tileRect.width / 2;
-  const folderCenterY = tileRect.top + tileRect.height / 2;
+  const targetRect = targetEl.getBoundingClientRect();
+  const centerX = targetRect.left + targetRect.width / 2;
+  const centerY = targetRect.top + targetRect.height / 2;
   const ghostW = ds.ghostEl.offsetWidth || 160;
   const ghostH = ds.ghostEl.offsetHeight || 240;
 
   ds.ghostEl.style.transition =
     'left 0.3s cubic-bezier(0.16, 1, 0.3, 1), top 0.3s cubic-bezier(0.16, 1, 0.3, 1), transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease-in';
-  ds.ghostEl.style.left = `${folderCenterX - ghostW / 2}px`;
-  ds.ghostEl.style.top = `${folderCenterY - ghostH / 2}px`;
+  ds.ghostEl.style.left = `${centerX - ghostW / 2}px`;
+  ds.ghostEl.style.top = `${centerY - ghostH / 2}px`;
   ds.ghostEl.style.transform = 'scale(0.2)';
   ds.ghostEl.style.opacity = '0';
 
@@ -1957,9 +2092,7 @@ async function dropIntoFolder(ds, folderId) {
 
     await loadPartyMovies();
     render();
-
-    const folder = state.folders.find((f) => f.id === folderId);
-    toast(`Moved to ${folder?.name || 'folder'}`);
+    toast(typeof successMessage === 'function' ? successMessage() : successMessage);
   } catch (e) {
     if (ds.sourceEl.isConnected) {
       ds.sourceEl.classList.remove('drag-source-active');
@@ -1972,20 +2105,35 @@ async function dropIntoFolder(ds, folderId) {
   }
 }
 
+async function dropIntoFolder(ds, folderId) {
+  const tile = document.querySelector(`.folder-tile[data-folder-id="${folderId}"]`);
+  await moveMovieFolderWithDropAnim(ds, tile, folderId, () => {
+    const folder = state.folders.find((f) => f.id === folderId);
+    return `Moved to ${folder?.name || 'folder'}`;
+  });
+}
+
+async function dropOutToRoot(ds) {
+  const backBtn = document.querySelector('#folderBackBtn') || document.querySelector('#folderBreadcrumb .folder-breadcrumb');
+  await moveMovieFolderWithDropAnim(ds, backBtn, null, 'Removed from folder');
+}
+
 // ---------- Movie Detail Sheet ----------
 function openMovieDetail(movieId) {
   const m = state.movies.find((x) => x.id === movieId);
   if (!m) return;
 
   const canEdit = m.kind === 'together' || m.added_by === state.me.id;
+  const movieFolder = m.folder_id ? state.folders.find((f) => f.id === m.folder_id) : null;
   const posterHtml = m.poster
-    ? `<img src="${esc(m.poster)}" alt="${esc(m.title)}" draggable="false" onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('div'),{className:'poster-ph',textContent:'${esc(m.title)}'}))">`
+    ? `<img src="${esc(m.poster)}" alt="${esc(m.title)}" draggable="false" onerror="this.onerror=null;const d=document.createElement('div');d.className='poster-ph';d.style.padding='40px 10px';d.textContent=this.alt;this.replaceWith(d);">`
     : `<div class="poster-ph" style="padding:40px 10px;">${esc(m.title)}</div>`;
 
   const metaParts = [];
   if (m.year) metaParts.push(m.year);
   if (m.kind === 'together') metaParts.push('Shared');
   else metaParts.push(`Added by ${m.added_by_name || 'Friend'}`);
+  if (movieFolder) metaParts.push(`Folder: ${movieFolder.name}`);
 
   const ratingHtml =
     m.status === 'watched' && m.rating
@@ -2018,6 +2166,13 @@ function openMovieDetail(movieId) {
                   : `<svg class="btn-icon-svg" viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg> Move to Want to Watch`
               }
             </button>
+            ${
+              m.folder_id
+                ? `<button class="btn" id="removeFromFolderBtn">
+                    <svg class="btn-icon-svg" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="9" y1="14" x2="15" y2="14"/></svg> Remove from Folder
+                  </button>`
+                : ''
+            }
             <button class="btn" id="editMovieBtn">
               <svg class="btn-icon-svg" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit Movie
             </button>
@@ -2063,6 +2218,24 @@ function openMovieDetail(movieId) {
       toast(e.message);
     }
   };
+
+  const removeFromFolderBtn = s.querySelector('#removeFromFolderBtn');
+  if (removeFromFolderBtn) {
+    removeFromFolderBtn.onclick = async () => {
+      removeFromFolderBtn.disabled = true;
+      try {
+        await api(`/movies/${m.id}`, { method: 'PATCH', body: { folder_id: null } });
+        hapticNotice('success');
+        closeSheet();
+        await loadPartyMovies();
+        render();
+        toast('Removed from folder');
+      } catch (e) {
+        toast(e.message);
+        removeFromFolderBtn.disabled = false;
+      }
+    };
+  }
 
   s.querySelector('#editMovieBtn').onclick = () => openMovieEditor(m);
 
@@ -2372,22 +2545,28 @@ function closePosterViewer() {
 // ---------- Movie Editor (Add / Edit) ----------
 async function resizeImage(file, maxW = 600) {
   const bmp = await createImageBitmap(file);
-  const ratio = Math.min(1, maxW / bmp.width);
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(bmp.width * ratio);
-  canvas.height = Math.round(bmp.height * ratio);
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-
-  return new Promise((resolve) => {
-    canvas.toBlob(
-      (blob) => {
-        resolve(blob || file);
-      },
-      'image/webp',
-      0.75
-    );
-  });
+  const encodeAt = (targetMaxW, quality) => {
+    const ratio = Math.min(1, targetMaxW / bmp.width);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bmp.width * ratio));
+    canvas.height = Math.max(1, Math.round(bmp.height * ratio));
+    canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    return new Promise((resolve) => {
+      canvas.toBlob((blob) => resolve(blob || file), 'image/webp', quality);
+    });
+  };
+  try {
+    let blob = await encodeAt(maxW, 0.75);
+    if (blob.size > 195 * 1024) {
+      blob = await encodeAt(maxW, 0.55);
+    }
+    if (blob.size > 195 * 1024) {
+      blob = await encodeAt(Math.min(maxW, 460), 0.55);
+    }
+    return blob;
+  } finally {
+    bmp.close?.();
+  }
 }
 
 const DEFAULT_TAG_PRESETS = [
@@ -2587,8 +2766,18 @@ function openMovieEditor(movie) {
   updateSegUi();
   updateRatingUi();
 
+  const canSwitchToPersonal = !isEdit || movie.added_by === state.me?.id;
+  if (!canSwitchToPersonal) {
+    const personalBtn = s.querySelector('#kindControl [data-k="personal"]');
+    if (personalBtn) {
+      personalBtn.disabled = true;
+      personalBtn.title = 'Only the author can make a movie personal';
+    }
+  }
+
   s.querySelectorAll('#kindControl button').forEach((b) => {
     b.onclick = () => {
+      if (b.disabled) return;
       draft.kind = b.dataset.k;
       updateSegUi();
     };
@@ -2634,9 +2823,11 @@ function openMovieEditor(movie) {
       toast('Cover uploaded');
     } catch (err) {
       toast(err.message || 'Upload failed');
+    } finally {
+      e.target.value = '';
+      btn.disabled = false;
+      btn.textContent = 'From Gallery';
     }
-    btn.disabled = false;
-    btn.textContent = 'From Gallery';
   };
 
   // Live autocomplete search as you type
@@ -2659,6 +2850,7 @@ function openMovieEditor(movie) {
     }
 
     searchTimer = setTimeout(async () => {
+      if (!s.isConnected) return;
       searchAbort = new AbortController();
       try {
         const res = await fetch('/api/movies/search?q=' + encodeURIComponent(val), {
@@ -2667,6 +2859,7 @@ function openMovieEditor(movie) {
         });
         if (!res.ok) throw new Error();
         const data = await res.json();
+        if (!s.isConnected) return;
         const list = data.results || [];
         if (!list.length) {
           suggestionsBox.hidden = true;
@@ -2800,6 +2993,11 @@ function openMovieEditor(movie) {
       $('#movieTitle').focus();
       return;
     }
+    if (year && !/^\d{4}$/.test(year)) {
+      toast('Enter a valid 4-digit year');
+      $('#movieYear').focus();
+      return;
+    }
 
     const payload = {
       title,
@@ -2819,6 +3017,7 @@ function openMovieEditor(movie) {
     }
 
     const saveBtn = $('#saveMovieBtn');
+    const origSaveHtml = saveBtn.innerHTML;
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving...';
 
@@ -2836,7 +3035,7 @@ function openMovieEditor(movie) {
     } catch (err) {
       toast(err.message || 'Failed to save');
       saveBtn.disabled = false;
-      saveBtn.textContent = 'Save';
+      saveBtn.innerHTML = origSaveHtml;
     }
   };
 }
@@ -2921,7 +3120,7 @@ function openPartySheet() {
       render();
       await loadPartyMovies();
       state.loading = false;
-      render();
+      render({ preserveScroll: false });
     };
   });
 
@@ -3104,6 +3303,28 @@ function openProfileSheet() {
     </div>
   `);
 
+  const syncMemberAppearanceInState = ({ name, avatarUrl }) => {
+    const myId = state.me?.id;
+    if (!myId) return;
+    for (const party of state.parties || []) {
+      for (const member of party.members || []) {
+        if (member.id !== myId) continue;
+        if (name !== undefined) {
+          member.custom_name = name;
+          member.name = name;
+        }
+        if (avatarUrl !== undefined) {
+          member.avatar_url = avatarUrl;
+        }
+      }
+    }
+    for (const mov of state.movies || []) {
+      if (mov.added_by !== myId) continue;
+      if (name !== undefined) mov.added_by_name = name;
+      if (avatarUrl !== undefined) mov.added_by_avatar = avatarUrl;
+    }
+  };
+
   // Avatar upload handler
   s.querySelector('#changeAvatarBtn').onclick = () => s.querySelector('#avatarFileInput').click();
   s.querySelector('#avatarFileInput').onchange = async (e) => {
@@ -3119,14 +3340,17 @@ function openProfileSheet() {
       const res = await api('/covers', { method: 'POST', body: fd });
       await api('/me/profile', { method: 'PATCH', body: { avatar_url: res.url } });
       state.me.avatar_url = res.url;
+      syncMemberAppearanceInState({ avatarUrl: res.url });
       s.querySelector('#profileAvatarLarge').innerHTML = `<img src="${esc(res.url)}" alt="">`;
       render();
       toast('Avatar updated');
     } catch (err) {
       toast(err.message || 'Avatar upload failed');
+    } finally {
+      e.target.value = '';
+      btn.disabled = false;
+      btn.textContent = 'Change Photo';
     }
-    btn.disabled = false;
-    btn.textContent = 'Change Photo';
   };
 
   // Profile name save
@@ -3137,6 +3361,7 @@ function openProfileSheet() {
       await api('/me/profile', { method: 'PATCH', body: { name: newName } });
       state.me.custom_name = newName;
       state.me.display_name = newName;
+      syncMemberAppearanceInState({ name: newName });
       render();
       toast('Nickname updated');
     } catch (err) {
@@ -3277,7 +3502,7 @@ function startPolling() {
     if (pendingMutationsCount > 0) return; // не перезаписывать данные во время мутаций
     if (state.dragState) return; // не обновлять DOM во время drag & drop
     if (document.visibilityState !== 'visible') return;
-    if (currentOverlay) return; // не мешаем открытым sheet
+    if (currentOverlay || activeDialogOverlay || activePosterViewer) return; // не мешаем открытым sheet и просмотрщикам
     isPolling = true;
     try {
       await loadPartyMovies();
@@ -3298,11 +3523,16 @@ function stopPolling() {
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.me) {
-    loadPartyMovies().then(() => {
-      refreshMoviesContainer();
+    if (!state.dragState && pendingMutationsCount === 0) {
+      loadPartyMovies().then(() => {
+        if (!state.dragState) refreshMoviesContainer();
+        startPolling();
+      }).catch(() => {});
+    } else {
       startPolling();
-    }).catch(() => {});
+    }
   } else {
+    if (state.dragState) handleDragCancel();
     stopPolling();
   }
 });

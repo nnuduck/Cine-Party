@@ -23,16 +23,18 @@ export async function handleTelegramWebhook(request, env) {
   const from = message.from;
   if (!from) return new Response('OK');
 
-  // Upsert user
+  // Upsert user without overwriting custom_name-backed first_name
   await env.DB.prepare(
     `INSERT INTO users (id, first_name, username) VALUES (?1, ?2, ?3)
-     ON CONFLICT(id) DO UPDATE SET first_name = excluded.first_name, username = excluded.username`
+     ON CONFLICT(id) DO UPDATE SET
+       first_name = CASE WHEN users.custom_name IS NULL THEN excluded.first_name ELSE users.first_name END,
+       username = excluded.username`
   )
     .bind(from.id, from.first_name || '', from.username || null)
     .run();
 
   if (text.startsWith('/start')) {
-    const parts = text.split(' ');
+    const parts = text.split(/\s+/);
     const code = (parts[1] || '').trim().toUpperCase();
 
     let replyText = 'Welcome to Cinema Party. Track movies together with friends.';

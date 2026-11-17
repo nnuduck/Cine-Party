@@ -196,66 +196,6 @@ button {
   display: block;
 }
 
-.member-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.member-row .avatar {
-  width: 44px !important;
-  height: 44px !important;
-  min-width: 44px !important;
-  min-height: 44px !important;
-  max-width: 44px !important;
-  max-height: 44px !important;
-  border-radius: 50% !important;
-  overflow: hidden !important;
-  border: 1px solid var(--border);
-  font-size: 15px;
-  flex-shrink: 0;
-}
-
-.member-row .avatar img {
-  width: 100% !important;
-  height: 100% !important;
-  max-width: 44px !important;
-  max-height: 44px !important;
-  object-fit: cover !important;
-  display: block !important;
-  border-radius: 50% !important;
-}
-
-.icon-btn {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  display: grid;
-  place-items: center;
-  color: var(--text);
-  flex: none;
-  transition: border-color 0.18s ease, transform 0.14s var(--ease-spring);
-}
-
-.icon-btn:active {
-  border-color: var(--muted);
-  transform: scale(0.94);
-}
-
-.icon-btn svg {
-  width: 20px;
-  height: 20px;
-  stroke: currentColor;
-  stroke-width: 1.5;
-  fill: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
 .icon-btn {
   width: 44px;
   height: 44px;
@@ -783,6 +723,10 @@ button {
   animation: overlayFadeIn 0.22s var(--ease-smooth);
   box-sizing: border-box;
   overflow-y: auto;
+}
+
+.overlay.dialog-overlay {
+  z-index: 150;
 }
 
 @media (min-width: 600px) {
@@ -1840,36 +1784,45 @@ textarea {
   margin-top: 2px;
 }
 
-/* ---------- Drag & Drop ---------- */
-.card.drag-ghost,
+/* ---------- Drag & Drop (Cover-only ghost) ---------- */
 .drag-ghost {
   position: fixed;
   z-index: 300;
   pointer-events: none;
   margin: 0;
-  transform: scale(1.05);
   border-radius: 18px;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.15);
-  opacity: 0.95;
+  overflow: hidden;
+  background: var(--surface);
+  border: none;
+  outline: none;
+  box-shadow: none;
+  opacity: 0.96;
+  display: grid;
+  place-items: center;
   will-change: left, top, transform, opacity;
   transform-origin: center center;
   transition: transform 0.16s var(--ease-spring), opacity 0.15s ease;
 }
 
-.drag-ghost .card-title,
-.drag-ghost .card-meta,
-.drag-ghost .card-date,
-.drag-ghost .card-tags {
-  opacity: 0;
+.drag-ghost img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
 }
 
-.drag-ghost .poster-box {
-  border-color: var(--accent);
-  box-shadow: 0 0 20px var(--accent-glow);
+.card.drag-source-active:active {
+  transform: none;
+  opacity: 1;
 }
 
-.drag-source-active {
-  opacity: 0.4;
+.drag-source-active .poster-box {
+  opacity: 0.28;
   transition: opacity 0.15s ease-out;
 }
 
@@ -1883,6 +1836,13 @@ textarea {
 
 .folder-tile.drag-hover .folder-icon-wrap svg {
   filter: brightness(1.2);
+}
+
+.folder-breadcrumb.drag-hover {
+  border-color: var(--accent);
+  background: var(--accent-glow);
+  transform: scale(1.02);
+  transition: all 0.15s var(--ease-spring);
 }
 
 /* Prevent touch scroll while dragging; keep programmatic window.scrollBy working */

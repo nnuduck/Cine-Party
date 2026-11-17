@@ -4,6 +4,18 @@
 
 const TMDB_DEFAULT_KEY = '4e44d9029b1270a757cddc766a1bcb63';
 
+export function isAllowedPosterUrl(p) {
+  if (p == null || p === '') return true;
+  if (typeof p !== 'string' || p.length > 500) return false;
+  return (
+    p.startsWith('https://image.tmdb.org/t/p/') ||
+    p.startsWith('https://m.media-amazon.com/images/') ||
+    p.startsWith('https://images.metahub.space/') ||
+    p.startsWith('https://live.metahub.space/') ||
+    /^\/api\/covers\/[a-f0-9]+$/.test(p)
+  );
+}
+
 const GENRE_MAP_EN = {
   28: 'action',
   12: 'adventure',
@@ -70,6 +82,7 @@ export async function searchMovies(query, env = {}) {
           const dateStr = item.release_date || item.first_air_date || '';
           const year = dateStr.slice(0, 4);
           const poster = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : null;
+          const safePoster = poster && isAllowedPosterUrl(poster) ? poster : null;
 
           // Build genre hashtags
           const tags = (item.genre_ids || [])
@@ -84,7 +97,7 @@ export async function searchMovies(query, env = {}) {
             title,
             original_title: origTitle && origTitle.toLowerCase() !== key ? origTitle : null,
             year,
-            poster,
+            poster: safePoster,
             tags,
             description: item.overview || '',
           });
@@ -124,6 +137,7 @@ export async function searchMovies(query, env = {}) {
               if (poster && poster.includes('._V1_SX')) {
                 poster = poster.replace(/\._V1_SX\d+\.jpg$/, '._V1_SX600.jpg');
               }
+              const safePoster = poster && isAllowedPosterUrl(poster) ? poster : null;
 
               // Extract genres if available
               const tags = (meta.genres || [])
@@ -136,7 +150,7 @@ export async function searchMovies(query, env = {}) {
                 title,
                 original_title: null,
                 year: String(meta.year || meta.releaseInfo || '').slice(0, 4),
-                poster,
+                poster: safePoster,
                 tags,
                 description: meta.description || '',
               });

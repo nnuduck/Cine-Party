@@ -25,6 +25,7 @@ export async function getUser(env, id) {
 }
 
 export async function updateUserProfile(env, id, { name, avatarUrl }) {
+  const current = avatarUrl !== undefined ? await getUser(env, id) : null;
   if (name !== undefined) {
     const cleanName = name ? String(name).trim().slice(0, 40) : null;
     await env.DB.prepare('UPDATE users SET custom_name = ? WHERE id = ?')
@@ -36,6 +37,13 @@ export async function updateUserProfile(env, id, { name, avatarUrl }) {
     await env.DB.prepare('UPDATE users SET avatar_url = ? WHERE id = ?')
       .bind(cleanAvatar, id)
       .run();
+    if (
+      current?.avatar_url &&
+      current.avatar_url !== cleanAvatar &&
+      current.avatar_url.startsWith('/api/covers/')
+    ) {
+      await deleteCover(env, current.avatar_url.slice('/api/covers/'.length));
+    }
   }
   return await getUser(env, id);
 }
@@ -117,19 +125,19 @@ export async function leaveParty(env, partyId, userId) {
     .first();
 
   if (!countRow || countRow.total === 0) {
-    // Delete associated cover images for this party
+    // Delete party rows first, then remove unreferenced cover blobs
     const movies = await env.DB.prepare(
       'SELECT poster FROM movies WHERE party_id = ? AND poster LIKE "/api/covers/%"'
     )
       .bind(partyId)
       .all();
+    await env.DB.prepare('DELETE FROM movies WHERE party_id = ?').bind(partyId).run();
+    await env.DB.prepare('DELETE FROM folders WHERE party_id = ?').bind(partyId).run();
+    await env.DB.prepare('DELETE FROM parties WHERE id = ?').bind(partyId).run();
     for (const m of movies.results || []) {
       const coverId = m.poster.slice('/api/covers/'.length);
       await deleteCover(env, coverId);
     }
-    await env.DB.prepare('DELETE FROM movies WHERE party_id = ?').bind(partyId).run();
-    await env.DB.prepare('DELETE FROM folders WHERE party_id = ?').bind(partyId).run();
-    await env.DB.prepare('DELETE FROM parties WHERE id = ?').bind(partyId).run();
   }
 }
 
@@ -233,14 +241,6 @@ export async function updateMovie(env, movieId, data) {
   const current = await getMovie(env, movieId);
   if (!current) return null;
 
-  // Cleanup old cover if poster changed to something else
-  if (data.poster !== undefined && current.poster && current.poster !== data.poster) {
-    if (current.poster.startsWith('/api/covers/')) {
-      const oldCoverId = current.poster.slice('/api/covers/'.length);
-      await deleteCover(env, oldCoverId);
-    }
-  }
-
   let watchedAt = current.watched_at;
   if (data.status && data.status !== current.status) {
     watchedAt = data.status === 'watched' ? new Date().toISOString() : null;
@@ -297,6 +297,17 @@ export async function updateMovie(env, movieId, data) {
     )
     .run();
 
+  // Cleanup old cover after clearing reference from the movie row
+  if (
+    data.poster !== undefined &&
+    current.poster &&
+    current.poster !== fields.poster &&
+    current.poster.startsWith('/api/covers/')
+  ) {
+    const oldCoverId = current.poster.slice('/api/covers/'.length);
+    await deleteCover(env, oldCoverId);
+  }
+
   return await getMovie(env, movieId);
 }
 
@@ -304,12 +315,12 @@ export async function deleteMovie(env, movieId) {
   const current = await getMovie(env, movieId);
   if (!current) return;
 
+  await env.DB.prepare('DELETE FROM movies WHERE id = ?').bind(movieId).run();
+
   if (current.poster && current.poster.startsWith('/api/covers/')) {
     const coverId = current.poster.slice('/api/covers/'.length);
     await deleteCover(env, coverId);
   }
-
-  await env.DB.prepare('DELETE FROM movies WHERE id = ?').bind(movieId).run();
 }
 
 export async function saveCover(env, userId, mime, bytes) {
@@ -329,6 +340,17 @@ export async function getCover(env, coverId) {
 }
 
 export async function deleteCover(env, coverId) {
+  if (!coverId) return;
+  const refPath = `/api/covers/${coverId}`;
+  const inUse = await env.DB.prepare(
+    `SELECT 1 AS used FROM movies WHERE poster = ?1
+     UNION ALL
+     SELECT 1 AS used FROM users WHERE avatar_url = ?1
+     LIMIT 1`
+  )
+    .bind(refPath)
+    .first();
+  if (inUse) return;
   await env.DB.prepare('DELETE FROM covers WHERE id = ?').bind(coverId).run();
 }
 
@@ -363,7 +385,9 @@ export async function getFolders(env, partyId, userId, tab, status = 'want') {
     scopeSql = "f.party_id = ?1 AND f.kind = 'personal' AND f.user_id = ?2";
     bindings = [partyId, userId];
   } else if (tab === 'others') {
-    scopeSql = "f.party_id = ?1 AND f.kind = 'personal' AND f.user_id IS NOT NULL AND f.user_id != ?2";
+    scopeSql =
+      "f.party_id = ?1 AND f.kind = 'personal' AND f.user_id IS NOT NULL AND f.user_id != ?2 " +
+      'AND EXISTS (SELECT 1 FROM members m WHERE m.party_id = f.party_id AND m.user_id = f.user_id)';
     bindings = [partyId, userId];
   } else {
     return [];
@@ -476,16 +500,14 @@ export async function updateFolder(env, folderId, data) {
 
 /** Deletes a folder, optionally deleting contained movies and their custom covers. */
 export async function deleteFolder(env, folderId, deleteMovies = false) {
+  let coverRows = [];
   if (deleteMovies) {
     const rows = await env.DB.prepare(
       "SELECT poster FROM movies WHERE folder_id = ? AND poster LIKE '/api/covers/%'"
     )
       .bind(folderId)
       .all();
-    for (const row of rows.results || []) {
-      const coverId = row.poster.slice('/api/covers/'.length);
-      await deleteCover(env, coverId);
-    }
+    coverRows = rows.results || [];
     await env.DB.prepare('DELETE FROM movies WHERE folder_id = ?').bind(folderId).run();
   } else {
     await env.DB.prepare('UPDATE movies SET folder_id = NULL WHERE folder_id = ?')
@@ -493,4 +515,8 @@ export async function deleteFolder(env, folderId, deleteMovies = false) {
       .run();
   }
   await env.DB.prepare('DELETE FROM folders WHERE id = ?').bind(folderId).run();
+  for (const row of coverRows) {
+    const coverId = row.poster.slice('/api/covers/'.length);
+    await deleteCover(env, coverId);
+  }
 }

@@ -1,7 +1,7 @@
 // Main Cloudflare Worker entrypoint and API router.
 import { authenticate, HttpError } from './auth.js';
 import * as db from './db.js';
-import { searchMovies } from './movieSearch.js';
+import { isAllowedPosterUrl, searchMovies } from './movieSearch.js';
 import { handleTelegramWebhook } from './telegram.js';
 
 function json(data, status = 200, headers = {}) {
@@ -15,14 +15,13 @@ function json(data, status = 200, headers = {}) {
 }
 
 function posterOk(p) {
-  if (p == null || p === '') return true;
-  if (typeof p !== 'string') return false;
-  return (
-    p.startsWith('https://image.tmdb.org/t/p/') ||
-    p.startsWith('https://m.media-amazon.com/images/') ||
-    p.startsWith('https://images.metahub.space/') ||
-    /^\/api\/covers\/[a-f0-9]+$/.test(p)
-  );
+  return isAllowedPosterUrl(p);
+}
+
+function avatarUrlOk(u) {
+  if (u === undefined || u === null || u === '') return true;
+  if (typeof u !== 'string' || u.length > 500) return false;
+  return /^\/api\/covers\/[a-f0-9]+$/.test(u) || /^https:\/\/[^\s"'<>]+$/i.test(u);
 }
 
 const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
@@ -149,7 +148,7 @@ export default {
       const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       await env.DB.prepare(`
         DELETE FROM covers 
-        WHERE created_at < ? 
+        WHERE datetime(created_at) < datetime(?) 
         AND id NOT IN (SELECT substr(poster, length('/api/covers/')+1) 
                        FROM movies WHERE poster LIKE '/api/covers/%')
         AND id NOT IN (SELECT substr(avatar_url, length('/api/covers/')+1) 
@@ -318,6 +317,9 @@ async function handleApi(request, env, url, path, method) {
   // PATCH /api/me/profile
   if (path === '/api/me/profile' && method === 'PATCH') {
     const body = await request.json().catch(() => ({}));
+    if (!avatarUrlOk(body.avatar_url)) {
+      throw new HttpError(400, 'Invalid avatar URL');
+    }
     const updated = await db.updateUserProfile(env, user.id, {
       name: body.name,
       avatarUrl: body.avatar_url,
