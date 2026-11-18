@@ -171,6 +171,15 @@ test('native standalone auth: register, duplicate rejection, login, Bearer party
   assert.equal(meAlice.data.parties.length, 1);
   assert.equal(meAlice.data.parties[0].members.length, 2);
 
+  // 7b. Profile update returns parsed custom_tags array matching UserDto
+  const profileRes = await req(env, 'PATCH', '/api/me/profile', {
+    body: { name: 'Alice Nothing' },
+    token: aliceLoginToken,
+  });
+  assert.equal(profileRes.status, 200);
+  assert.equal(profileRes.data.user.display_name, 'Alice Nothing');
+  assert.equal(Array.isArray(profileRes.data.user.custom_tags), true);
+
   // 8. Logout invalidates the session token
   res = await req(env, 'POST', '/api/auth/logout', { token: aliceLoginToken });
   assert.equal(res.status, 200);

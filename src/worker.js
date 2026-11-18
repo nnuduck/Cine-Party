@@ -437,7 +437,7 @@ async function handleApi(request, env, url, path, method) {
       name: body.name,
       avatarUrl: body.avatar_url,
     });
-    return json({ user: updated });
+    return json({ user: serializeUserPayload(updated) });
   }
 
   // PATCH /api/me/accent
