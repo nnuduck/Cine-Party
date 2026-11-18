@@ -1,5 +1,14 @@
 // Main Cloudflare Worker entrypoint and API router.
-import { authenticate, HttpError } from './auth.js';
+import {
+  authenticate,
+  createSession,
+  generateNativeUserId,
+  generateSaltHex,
+  hashPassword,
+  HttpError,
+  revokeSession,
+  verifyPassword,
+} from './auth.js';
 import * as db from './db.js';
 import { isAllowedPosterUrl, searchMovies } from './movieSearch.js';
 import { handleTelegramWebhook } from './telegram.js';
@@ -154,6 +163,9 @@ export default {
         AND id NOT IN (SELECT substr(avatar_url, length('/api/covers/')+1) 
                        FROM users WHERE avatar_url LIKE '/api/covers/%')
       `).bind(cutoff).run();
+      await env.DB.prepare(
+        "DELETE FROM auth_sessions WHERE datetime(expires_at) <= datetime('now')"
+      ).run();
     } catch (e) {
       console.error('Scheduled cover cleanup failed:', e);
     }
@@ -179,7 +191,124 @@ function checkRateLimit(userId, maxReq = 10, windowMs = 10000) {
   }
 }
 
+function serializeUserPayload(fullUser) {
+  let customTags = [];
+  try {
+    const arr = JSON.parse(fullUser?.custom_tags || '[]');
+    if (Array.isArray(arr)) customTags = arr;
+  } catch {}
+  return {
+    id: fullUser.id,
+    first_name: fullUser.first_name,
+    username: fullUser.username,
+    custom_name: fullUser.custom_name || null,
+    display_name: fullUser.display_name || fullUser.custom_name || fullUser.first_name || 'You',
+    avatar_url: fullUser.avatar_url || null,
+    accent: fullUser.accent || null,
+    custom_tags: customTags,
+  };
+}
+
 async function handleApi(request, env, url, path, method) {
+  // Standalone native auth routes
+  if (path === '/api/auth/register' && method === 'POST') {
+    const ipKey = `reg:${request.headers.get('CF-Connecting-IP') || 'anon-ip'}`;
+    checkRateLimit(ipKey, 10, 60000);
+    const body = await request.json().catch(() => ({}));
+    const login = String(body.login || '').trim().toLowerCase();
+    if (!/^[a-z0-9_.-]{3,32}$/.test(login)) {
+      throw new HttpError(400, 'Username must be 3–32 characters (letters, numbers, ., _, -)');
+    }
+    const password = typeof body.password === 'string' ? body.password : '';
+    if (password.length < 6 || password.length > 128) {
+      throw new HttpError(400, 'Password must be at least 6 characters');
+    }
+    const displayName = String(body.display_name || login).trim().slice(0, 40) || login;
+
+    const existing = await env.DB.prepare(
+      'SELECT 1 AS found FROM auth_accounts WHERE login = ?1'
+    )
+      .bind(login)
+      .first();
+    if (existing) {
+      throw new HttpError(409, 'Username is already taken');
+    }
+
+    const saltHex = generateSaltHex(16);
+    const pwdHash = await hashPassword(password, saltHex);
+
+    let userId = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const candidate = generateNativeUserId();
+      try {
+        await env.DB.prepare(
+          'INSERT INTO users (id, first_name, username, custom_name) VALUES (?1, ?2, ?3, ?4)'
+        )
+          .bind(candidate, displayName, login, displayName)
+          .run();
+        userId = candidate;
+        break;
+      } catch (err) {
+        if (String(err).includes('UNIQUE constraint failed')) continue;
+        throw err;
+      }
+    }
+    if (!userId) {
+      throw new Error('Failed to allocate unique user ID');
+    }
+
+    try {
+      await env.DB.prepare(
+        'INSERT INTO auth_accounts (user_id, login, password_salt, password_hash) VALUES (?1, ?2, ?3, ?4)'
+      )
+        .bind(userId, login, saltHex, pwdHash)
+        .run();
+    } catch (err) {
+      await env.DB.prepare('DELETE FROM users WHERE id = ?1').bind(userId).run();
+      if (String(err).includes('UNIQUE constraint failed')) {
+        throw new HttpError(409, 'Username is already taken');
+      }
+      throw err;
+    }
+
+    const token = await createSession(env, userId);
+    const fullUser = await db.getUser(env, userId);
+    return json({ token, user: serializeUserPayload(fullUser) }, 201);
+  }
+
+  if (path === '/api/auth/login' && method === 'POST') {
+    const ipKey = `login:${request.headers.get('CF-Connecting-IP') || 'anon-ip'}`;
+    checkRateLimit(ipKey, 15, 60000);
+    const body = await request.json().catch(() => ({}));
+    const login = String(body.login || '').trim().toLowerCase();
+    const password = typeof body.password === 'string' ? body.password : '';
+
+    const account = login
+      ? await env.DB.prepare(
+          'SELECT user_id, password_salt, password_hash FROM auth_accounts WHERE login = ?1'
+        )
+          .bind(login)
+          .first()
+      : null;
+
+    if (!account || !(await verifyPassword(password, account.password_salt, account.password_hash))) {
+      throw new HttpError(401, 'Invalid username or password');
+    }
+
+    const token = await createSession(env, account.user_id);
+    const fullUser = await db.getUser(env, account.user_id);
+    return json({ token, user: serializeUserPayload(fullUser) });
+  }
+
+  if (path === '/api/auth/logout' && method === 'POST') {
+    const header = request.headers.get('Authorization') || '';
+    if (header.startsWith('Bearer ')) {
+      const rawToken = header.slice(7).trim();
+      await revokeSession(env, rawToken);
+    }
+    return json({ ok: true });
+  }
+
   // Movie search route (open catalog + optional TMDB, auth required)
   if ((path === '/api/movies/search' || path === '/api/tmdb/search') && method === 'GET') {
     const user = await authenticate(request, env);
@@ -257,23 +386,7 @@ async function handleApi(request, env, url, path, method) {
     }
 
     return json({
-      user: {
-        id: fullUser.id,
-        first_name: fullUser.first_name,
-        username: fullUser.username,
-        custom_name: fullUser.custom_name || null,
-        display_name: fullUser.display_name || fullUser.custom_name || fullUser.first_name || 'You',
-        avatar_url: fullUser.avatar_url || null,
-        accent: fullUser.accent || null,
-        custom_tags: (() => {
-          try {
-            const arr = JSON.parse(fullUser.custom_tags || '[]');
-            return Array.isArray(arr) ? arr : [];
-          } catch {
-            return [];
-          }
-        })(),
-      },
+      user: serializeUserPayload(fullUser),
       parties,
       invite_base: inviteBase,
     });
