@@ -169,6 +169,17 @@ document.body.addEventListener('click', (e) => {
     return;
   }
 
+  const folderSettingsBtn = e.target.closest('#folderSettingsBtn');
+  if (folderSettingsBtn) {
+    const fid = Number(folderSettingsBtn.dataset.folderId || state.selectedFolder);
+    const folder = state.folders.find((f) => f.id === fid);
+    if (folder) {
+      haptic('light');
+      openFolderContextSheet(folder);
+    }
+    return;
+  }
+
   const tile = e.target.closest('.folder-tile');
   if (tile && tile.dataset.folderId) {
     const folderId = Number(tile.dataset.folderId);
@@ -261,17 +272,18 @@ initHomeScreen();
 function openAddToHomeGuideSheet() {
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
   openSheet(`
+    ${sheetHeaderHtml('Shortcut // Home')}
     <h2 class="sheet-title display">Add to Home Screen</h2>
-    <div style="display:flex; align-items:center; gap:16px; margin-bottom:20px;">
-      <img src="/icon-512.png" alt="Cinema Party Icon" style="width:60px; height:60px; border-radius:16px; border:1px solid var(--border); box-shadow:0 4px 16px rgba(0,0,0,0.5);">
+    <div style="display:flex; align-items:center; gap:14px; margin-bottom:16px;">
+      <img src="/icon-512.png" alt="Cinema Party Icon" style="width:54px; height:54px; border-radius:14px; border:1px solid var(--border); box-shadow:0 4px 16px rgba(0,0,0,0.5);">
       <div>
-        <div style="font-weight:700; font-size:16px;">Cinema Party</div>
-        <div style="color:var(--muted); font-size:13px;">Full-screen phone shortcut</div>
+        <div style="font-family:var(--font-grotesk); font-weight:700; font-size:15px;">Cinema Party</div>
+        <div style="color:var(--muted); font-size:12.5px;">Full-screen phone shortcut</div>
       </div>
     </div>
 
-    <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:16px; padding:16px; margin-bottom:14px;">
-      <div style="font-weight:600; font-size:14px; margin-bottom:8px; color:var(--text);">In Telegram:</div>
+    <div class="bento-card">
+      <div class="bento-label" style="margin-bottom:8px;">In Telegram</div>
       <ol style="margin-left:18px; color:var(--muted); font-size:13px; line-height:1.6;">
         <li>Tap the three dots (<strong>⋮</strong>) in the top-right corner of this screen.</li>
         <li>Select <strong>Add to Home screen</strong>.</li>
@@ -282,8 +294,8 @@ function openAddToHomeGuideSheet() {
       </div>
     </div>
 
-    <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:16px; padding:16px; margin-bottom:18px;">
-      <div style="font-weight:600; font-size:14px; margin-bottom:8px; color:var(--text);">In Browser:</div>
+    <div class="bento-card">
+      <div class="bento-label" style="margin-bottom:8px;">In Browser</div>
       <div style="color:var(--muted); font-size:13px; line-height:1.6;">
         ${
           isIos
@@ -293,7 +305,7 @@ function openAddToHomeGuideSheet() {
       </div>
     </div>
 
-    <div class="action-stack" style="justify-content:center;">
+    <div class="action-stack full-width">
       <button type="button" class="btn primary" id="openDirectBotLinkBtn">Open via t.me/cine_party_bot/cinema</button>
       <button type="button" class="btn" id="gotItGuideBtn">Close</button>
     </div>
@@ -439,6 +451,18 @@ let activeDialogOverlay = null;
 let dialogBackButtonBound = false;
 let onDialogClose = null;
 
+function sheetHeaderHtml(eyebrow, isDialog = false) {
+  const closeAttr = isDialog ? 'data-close-dialog' : 'data-close-sheet';
+  return `
+    <div class="sheet-header-row">
+      <span class="sheet-eyebrow">${esc(eyebrow)}</span>
+      <button type="button" class="sheet-close-btn" ${closeAttr} aria-label="Close">
+        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+  `;
+}
+
 function openSheet(contentHtml) {
   closeSheet();
   const overlay = document.createElement('div');
@@ -446,7 +470,7 @@ function openSheet(contentHtml) {
   overlay.innerHTML = `<div class="sheet"><div class="drag-handle"></div>${contentHtml}</div>`;
 
   overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closeSheet();
+    if (e.target === overlay || e.target.closest('[data-close-sheet]')) closeSheet();
   });
 
   document.body.appendChild(overlay);
@@ -494,7 +518,7 @@ function openDialogSheet(contentHtml) {
   overlay.innerHTML = `<div class="sheet"><div class="drag-handle"></div>${contentHtml}</div>`;
 
   overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closeDialogSheet();
+    if (e.target === overlay || e.target.closest('[data-close-dialog]')) closeDialogSheet();
   });
 
   document.body.appendChild(overlay);
@@ -544,13 +568,14 @@ function closeDialogSheet() {
 function confirmSheet({ title, message, confirmText = 'Delete', cancelText = 'Cancel' }) {
   return new Promise((resolve) => {
     const s = openDialogSheet(`
+      ${sheetHeaderHtml('Confirm Action', true)}
       <h2 class="sheet-title display">${esc(title)}</h2>
-      <div style="color:var(--muted); font-size:14px; line-height:1.5; margin-bottom:20px;">
+      <div class="bento-card" style="color:var(--muted); font-size:13.5px; line-height:1.5;">
         ${esc(message)}
       </div>
-      <div class="action-stack" style="justify-content:center;">
-        <button type="button" class="btn danger" id="confirmYes">${esc(confirmText)}</button>
+      <div class="action-grid-2" style="margin-top:14px;">
         <button type="button" class="btn" id="confirmNo">${esc(cancelText)}</button>
+        <button type="button" class="btn danger" id="confirmYes">${esc(confirmText)}</button>
       </div>
     `);
     let resolved = false;
@@ -575,14 +600,17 @@ function confirmSheet({ title, message, confirmText = 'Delete', cancelText = 'Ca
 function promptSheet({ title, message, placeholder = '', initialValue = '' }) {
   return new Promise((resolve) => {
     const s = openDialogSheet(`
+      ${sheetHeaderHtml('Input Prompt', true)}
       <h2 class="sheet-title display">${esc(title)}</h2>
-      <div style="color:var(--muted); font-size:14px; line-height:1.4; margin-bottom:16px;">
-        ${esc(message || '')}
+      <div class="bento-card">
+        <div style="color:var(--muted); font-size:13px; line-height:1.4; margin-bottom:12px;">
+          ${esc(message || '')}
+        </div>
+        <input type="text" id="promptInput" value="${esc(initialValue)}" placeholder="${esc(placeholder)}" maxlength="40" style="width:100%;">
       </div>
-      <input type="text" id="promptInput" value="${esc(initialValue)}" placeholder="${esc(placeholder)}" maxlength="40" style="width:100%; margin-bottom:16px;">
-      <div class="action-stack" style="justify-content:center;">
-        <button type="button" class="btn primary" id="promptOk">OK</button>
+      <div class="action-grid-2" style="margin-top:14px;">
         <button type="button" class="btn" id="promptCancel">Cancel</button>
+        <button type="button" class="btn primary" id="promptOk">OK</button>
       </div>
     `);
     let resolved = false;
@@ -653,14 +681,14 @@ function parseTags(raw) {
     .map((t) => (t.startsWith('#') ? t : `#${t}`));
 }
 
-function tabMovies() {
+function filterMoviesByScope(tabKey, statusKey) {
   const myId = state.me?.id;
   const memberIds = new Set((currentParty()?.members || []).map((x) => x.id));
-  return state.movies.filter((m) => {
-    if (m.status !== state.status) return false;
-    if (state.tab === 'together') return m.kind === 'together';
-    if (state.tab === 'mine') {
-      if (state.status === 'watched') {
+  return (state.movies || []).filter((m) => {
+    if (m.status !== statusKey) return false;
+    if (tabKey === 'together') return m.kind === 'together';
+    if (tabKey === 'mine') {
+      if (statusKey === 'watched') {
         return (m.kind === 'personal' && m.added_by === myId) || m.kind === 'together';
       }
       return m.kind === 'personal' && m.added_by === myId;
@@ -671,6 +699,10 @@ function tabMovies() {
       (memberIds.size === 0 || memberIds.has(m.added_by))
     );
   });
+}
+
+function tabMovies() {
+  return filterMoviesByScope(state.tab, state.status);
 }
 
 function partyTags() {
@@ -805,30 +837,33 @@ function darkenHex(hex, amount = 0.3) {
   return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
-function renderFolderIcon(color = '#D71921', size = 64) {
+function renderFolderIcon(color = '#D71921', size = 20) {
   const front = /^#[0-9A-Fa-f]{6}$/.test(color || '') ? color : '#D71921';
-  const back = darkenHex(front, 0.3);
+  const ring = darkenHex(front, 0.15);
   return `
-    <svg width="${size}" height="${size}" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-      <path d="M8 17C8 13.6863 10.6863 11 14 11H24.6C26.4 11 28.1 11.8 29.2 13.2L31.4 16H50C53.3137 16 56 18.6863 56 22V26H8V17Z" fill="${esc(back)}"/>
-      <rect x="6" y="21" width="52" height="33" rx="7" fill="${esc(front)}" fill-opacity="0.92"/>
-      <rect x="6" y="21" width="52" height="33" rx="7" stroke="rgba(255,255,255,0.22)" stroke-width="1"/>
+    <svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" stroke="${esc(ring)}" stroke-width="2" stroke-dasharray="2.2 3"/>
+      <circle cx="12" cy="12" r="3.6" fill="${esc(front)}"/>
     </svg>
   `;
 }
 
 function renderFolderTile(folder) {
   const count = Number(folder.movie_count || 0);
-  const countLabel = `${count} ${count === 1 ? 'movie' : 'movies'}`;
-  const ownerSub = state.tab === 'others' && folder.owner_name
-    ? `<div class="folder-owner-sub">${esc(folder.owner_name)}</div>`
-    : '';
+  const countStr = String(count).padStart(2, '0');
+  const subText = state.tab === 'others' && folder.owner_name
+    ? esc(folder.owner_name)
+    : `${count} ${count === 1 ? 'film' : 'films'}`;
   return `
     <button type="button" class="folder-tile" data-folder-id="${folder.id}">
-      <div class="folder-icon-wrap">${renderFolderIcon(folder.color, 64)}</div>
-      <div class="folder-name">${esc(folder.name)}</div>
-      <div class="folder-count">${countLabel}</div>
-      ${ownerSub}
+      <div class="folder-tile-top">
+        <div class="folder-icon-wrap">${renderFolderIcon(folder.color, 16)}</div>
+        <span class="folder-count">${countStr}</span>
+      </div>
+      <div class="folder-tile-meta">
+        <div class="folder-name">${esc(folder.name)}</div>
+        <div class="folder-owner-sub">${subText}</div>
+      </div>
     </button>
   `;
 }
@@ -902,11 +937,11 @@ function hashMovie(m) {
 function renderCard(m) {
   const tagBadge =
     m.kind === 'together' && state.tab !== 'together'
-      ? `<span class="tag-badge accent">Together</span>`
+      ? `<span class="tag-badge accent"><span class="badge-diode"></span><span>Together</span></span>`
       : '';
   const ratingBadge =
     m.status === 'watched' && m.rating
-      ? `<span class="rating-badge">${m.rating}/5</span>`
+      ? `<span class="rating-badge"><span class="rating-star">★</span><span>${m.rating}.0</span></span>`
       : '';
 
   const posterHtml = m.poster
@@ -1000,6 +1035,17 @@ const SORT_OPTIONS = [
   { value: 'alpha_desc', label: 'Z → A', shortLabel: 'Z → A' },
 ];
 
+function syncCountsUi() {
+  ['together', 'mine', 'others'].forEach((t) => {
+    const el = $app.querySelector(`[data-tab-count="${t}"]`);
+    if (el) el.textContent = String(filterMoviesByScope(t, state.status).length);
+  });
+  ['want', 'watched'].forEach((st) => {
+    const el = $app.querySelector(`[data-status-count="${st}"]`);
+    if (el) el.textContent = String(filterMoviesByScope(state.tab, st).length);
+  });
+}
+
 function refreshMoviesContainer() {
   const container = $app.querySelector('#moviesContainer');
   if (!container) return;
@@ -1015,21 +1061,48 @@ function refreshMoviesContainer() {
     state.selectedFolder = null;
   }
 
+  const list = visibleMovies();
+
   if (breadcrumbEl) {
-    breadcrumbEl.innerHTML = activeFolder
-      ? `
+    if (activeFolder) {
+      const canEditFolder = state.tab !== 'others' && (activeFolder.kind === 'together' || activeFolder.user_id === state.me?.id);
+      const showDropExit = state.tab !== 'others' && list.length > 0;
+      breadcrumbEl.innerHTML = `
         <div class="folder-breadcrumb">
-          <button type="button" class="folder-back-btn" id="folderBackBtn">
-            <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
-            Back to all
-          </button>
-          <div class="folder-crumb-title">
-            <span class="folder-crumb-dot" style="background:${esc(activeFolder.color)}"></span>
-            <span>${esc(activeFolder.name)}</span>
+          <div class="folder-breadcrumb-top">
+            <button type="button" class="folder-back-btn" id="folderBackBtn">
+              <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
+              <span>Back to all</span>
+            </button>
+            <div class="folder-crumb-title">
+              <span class="folder-crumb-dot" style="background:${esc(activeFolder.color)}"></span>
+              <span>${esc(activeFolder.name)} · ${list.length}</span>
+            </div>
+            ${
+              canEditFolder
+                ? `
+                  <button type="button" class="folder-settings-btn" id="folderSettingsBtn" data-folder-id="${activeFolder.id}" aria-label="Folder settings">
+                    <svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+                  </button>
+                `
+                : ''
+            }
           </div>
+          ${
+            showDropExit
+              ? `
+                <div class="folder-drop-exit">
+                  <svg viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                  <span>Hold &amp; drag poster here to move out</span>
+                </div>
+              `
+              : ''
+          }
         </div>
-      `
-      : '';
+      `;
+    } else {
+      breadcrumbEl.innerHTML = '';
+    }
   }
 
   const showFolders = !state.selectedFolder
@@ -1039,15 +1112,21 @@ function refreshMoviesContainer() {
 
   if (foldersEl) {
     if (showFolders) {
-      foldersEl.className = 'folders-grid';
-      foldersEl.innerHTML = state.folders.map(renderFolderTile).join('');
+      foldersEl.className = '';
+      foldersEl.innerHTML = `
+        <div class="section-telemetry-row">
+          <span class="telemetry-label">Collections</span>
+          <span class="telemetry-meta">${state.folders.length} ${state.folders.length === 1 ? 'BIN' : 'BINS'}</span>
+        </div>
+        <div class="folders-grid">${state.folders.map(renderFolderTile).join('')}</div>
+      `;
     } else {
       foldersEl.className = '';
       foldersEl.innerHTML = '';
     }
   }
 
-  const list = visibleMovies();
+  syncCountsUi();
 
   // Empty state
   if (list.length === 0) {
@@ -1059,14 +1138,26 @@ function refreshMoviesContainer() {
       const txt = gridContainer.querySelector('.empty-text');
       if (txt) txt.textContent = emptyMessage();
     }
+    syncTagFilterBar();
     return;
   }
 
-  // Ensure grid exists
+  // Ensure feed header + grid exist
   let grid = gridContainer.querySelector('.grid');
   if (!grid) {
-    gridContainer.innerHTML = '<div class="grid"></div>';
+    gridContainer.innerHTML = `
+      <div class="section-telemetry-row" id="feedTelemetry">
+        <span class="telemetry-label">Library Feed</span>
+        <span class="telemetry-meta"></span>
+      </div>
+      <div class="grid"></div>
+    `;
     grid = gridContainer.querySelector('.grid');
+  }
+
+  const feedMeta = gridContainer.querySelector('#feedTelemetry .telemetry-meta');
+  if (feedMeta) {
+    feedMeta.textContent = `${list.length} ${list.length === 1 ? 'ITEM' : 'ITEMS'}`;
   }
 
   const wantedIds = new Set(list.map((m) => m.id));
@@ -1111,7 +1202,7 @@ function renderTagFilterBarMarkup(tagsList) {
   if (!tagsList.length) return '';
   return `
     <div class="tag-filter-bar" id="tagFilterBar">
-      <button type="button" class="tag-filter-chip ${!state.selectedTag ? 'active' : ''}" data-tag="">All</button>
+      <button type="button" class="tag-filter-chip ${!state.selectedTag ? 'active' : ''}" data-tag="">#All</button>
       ${tagsList
         .map(
           ([t, count]) => `
@@ -1311,16 +1402,17 @@ function render({ preserveScroll = true } = {}) {
 
   const otherTabLabel = otherMemberName();
 
+  const togetherCount = filterMoviesByScope('together', state.status).length;
+  const mineCount = filterMoviesByScope('mine', state.status).length;
+  const othersCount = filterMoviesByScope('others', state.status).length;
+  const wantCount = filterMoviesByScope(state.tab, 'want').length;
+  const watchedCount = filterMoviesByScope(state.tab, 'watched').length;
+
   $app.innerHTML = `
     <div class="screen">
       <header class="topbar">
         <button class="pill-tablet party-pill" id="partySelectBtn" aria-label="Select Party">
-          <svg class="pill-icon-svg" viewBox="0 0 24 24">
-            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-            <circle cx="9" cy="7" r="4"></circle>
-            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-          </svg>
+          <span class="pill-diode"></span>
           <span class="pill-label">${esc(p.name)}</span>
           <span class="pill-count-badge">· ${membersCount}</span>
           <svg class="pill-chevron-svg" viewBox="0 0 24 24">
@@ -1329,20 +1421,37 @@ function render({ preserveScroll = true } = {}) {
         </button>
 
         <button class="pill-tablet profile-pill" id="profileBtn" aria-label="Profile">
-          <div class="pill-avatar-circle">${userAvatarHtml}</div>
+          <div class="pill-avatars">
+            <div class="pill-avatar-circle">${userAvatarHtml}</div>
+          </div>
           <span class="pill-label">${esc(state.me?.custom_name || state.me?.display_name || state.me?.first_name || 'Profile')}</span>
         </button>
       </header>
 
       <nav class="tabs">
-        <button class="tab ${state.tab === 'together' ? 'active' : ''}" data-tab="together"><span>Together</span></button>
-        <button class="tab ${state.tab === 'mine' ? 'active' : ''}" data-tab="mine"><span>Mine</span></button>
-        <button class="tab ${state.tab === 'others' ? 'active' : ''}" data-tab="others"><span>${esc(otherTabLabel)}</span></button>
+        <button class="tab ${state.tab === 'together' ? 'active' : ''}" data-tab="together">
+          <span class="tab-label">Together</span>
+          <span class="tab-count" data-tab-count="together">${togetherCount}</span>
+        </button>
+        <button class="tab ${state.tab === 'mine' ? 'active' : ''}" data-tab="mine">
+          <span class="tab-label">Mine</span>
+          <span class="tab-count" data-tab-count="mine">${mineCount}</span>
+        </button>
+        <button class="tab ${state.tab === 'others' ? 'active' : ''}" data-tab="others">
+          <span class="tab-label">${esc(otherTabLabel)}</span>
+          <span class="tab-count" data-tab-count="others">${othersCount}</span>
+        </button>
       </nav>
 
       <div class="seg-control">
-        <button class="seg-btn ${state.status === 'want' ? 'active' : ''}" data-status="want">Want to watch</button>
-        <button class="seg-btn ${state.status === 'watched' ? 'active' : ''}" data-status="watched">Watched</button>
+        <button class="seg-btn ${state.status === 'want' ? 'active' : ''}" data-status="want">
+          <span>Want to watch</span>
+          <span class="seg-count" data-status-count="want">${wantCount}</span>
+        </button>
+        <button class="seg-btn ${state.status === 'watched' ? 'active' : ''}" data-status="watched">
+          <span>Watched</span>
+          <span class="seg-count" data-status-count="watched">${watchedCount}</span>
+        </button>
       </div>
 
       ${renderFilterSection()}
@@ -1433,26 +1542,34 @@ function render({ preserveScroll = true } = {}) {
 // ---------- Welcome Screen ----------
 function renderWelcome() {
   $app.innerHTML = `
-    <div class="screen" style="padding-top:12vh; text-align:center;">
-      <h1 class="display" style="font-size:28px; margin-bottom:8px;">Cinema Party</h1>
-      <p style="color:var(--muted); font-size:14px; margin-bottom:32px;">Shared movie tracking with friends.</p>
+    <div class="screen" style="padding-top:10vh;">
+      <div style="text-align:center; margin-bottom:28px;">
+        <div style="display:inline-flex; align-items:center; gap:6px; padding:4px 12px; border-radius:9999px; background:rgba(255,255,255,0.04); border:1px solid var(--border); margin-bottom:14px;">
+          <span class="pill-diode"></span>
+          <span class="telemetry-label" style="letter-spacing:0.18em;">CINEMA // TG</span>
+        </div>
+        <h1 class="display" style="font-size:26px; margin-bottom:6px;">Cinema Party</h1>
+        <p style="color:var(--muted); font-size:13px;">Shared movie tracking with friends.</p>
+      </div>
 
-      <div style="display:grid; gap:12px; text-align:left;">
+      <div class="bento-card">
         <label class="form-field">
           <span class="form-label">Create a new party</span>
           <input type="text" id="newPartyName" placeholder="e.g. Movie Nights" maxlength="40">
         </label>
-        <div>
+        <div class="action-stack full-width" style="margin-top:8px;">
           <button class="btn primary" id="createPartyBtn">Create Party</button>
         </div>
+      </div>
 
-        <div style="text-align:center; color:var(--muted); font-size:12px; margin:8px 0;">OR</div>
+      <div style="text-align:center; font-family:var(--font-grotesk); letter-spacing:0.2em; color:var(--dim); font-size:10px; margin:14px 0;">OR</div>
 
+      <div class="bento-card">
         <label class="form-field">
           <span class="form-label">Join by invite code</span>
           <input type="text" id="joinPartyCode" placeholder="6-CHAR CODE" autocapitalize="characters" maxlength="6">
         </label>
-        <div>
+        <div class="action-stack full-width" style="margin-top:8px;">
           <button class="btn" id="joinPartyBtn">Join Party</button>
         </div>
       </div>
@@ -1495,29 +1612,34 @@ function openFolderEditor(folder = null, options = {}) {
   let selectedColor = /^#[0-9A-Fa-f]{6}$/.test(folder?.color || '') ? folder.color : '#D71921';
 
   const s = openSheet(`
+    ${sheetHeaderHtml(isEdit ? 'Folder // Edit' : 'Folder // New')}
     <h2 class="sheet-title display">${isEdit ? 'Edit Folder' : 'New Folder'}</h2>
     <div class="folder-editor-preview" id="folderIconPreview">
-      ${renderFolderIcon(selectedColor, 64)}
+      ${renderFolderIcon(selectedColor, 56)}
     </div>
-    <div class="field">
-      <label class="field-label" for="folderNameInput">Folder Name</label>
-      <input type="text" id="folderNameInput" maxlength="40" value="${esc(folder?.name || '')}" placeholder="e.g. Weekend Watchlist">
-    </div>
-    <div class="field">
-      <label class="field-label">Color</label>
-      <div class="swatches" id="folderSwatchRow">
-        ${PRESET_SWATCHES.map((hex) => `
-          <button type="button" class="swatch ${selectedColor.toLowerCase() === hex.toLowerCase() ? 'active' : ''}" data-color="${hex}" style="background:${hex};" aria-label="Color ${hex}"></button>
-        `).join('')}
-      </div>
-      <div class="color-row" style="margin-top:10px;">
-        <input type="color" id="folderColorPicker" value="${esc(selectedColor)}" aria-label="Custom folder color">
-        <span style="font-size:13px; color:var(--muted);">Custom color</span>
+    <div class="bento-card">
+      <div class="field" style="margin-bottom:0;">
+        <label class="field-label" for="folderNameInput">Folder Name</label>
+        <input type="text" id="folderNameInput" maxlength="40" value="${esc(folder?.name || '')}" placeholder="e.g. Weekend Watchlist">
       </div>
     </div>
-    <div class="action-stack">
-      <button type="button" class="btn primary" id="saveFolderBtn">${isEdit ? 'Save' : 'Create'}</button>
+    <div class="bento-card">
+      <div class="field" style="margin-bottom:0;">
+        <label class="field-label">Color</label>
+        <div class="swatches" id="folderSwatchRow">
+          ${PRESET_SWATCHES.map((hex) => `
+            <button type="button" class="swatch ${selectedColor.toLowerCase() === hex.toLowerCase() ? 'active' : ''}" data-color="${hex}" style="background:${hex};" aria-label="Color ${hex}"></button>
+          `).join('')}
+        </div>
+        <div class="color-row" style="margin-bottom:0;">
+          <input type="color" id="folderColorPicker" value="${esc(selectedColor)}" aria-label="Custom folder color">
+          <span style="font-size:12px; color:var(--muted);">Custom color</span>
+        </div>
+      </div>
+    </div>
+    <div class="action-grid-2" style="margin-top:14px;">
       <button type="button" class="btn" id="cancelFolderBtn">Cancel</button>
+      <button type="button" class="btn primary" id="saveFolderBtn">${isEdit ? 'Save' : 'Create'}</button>
     </div>
   `);
 
@@ -1530,7 +1652,7 @@ function openFolderEditor(folder = null, options = {}) {
   function syncColor(hex) {
     if (!/^#[0-9A-Fa-f]{6}$/.test(hex || '')) return;
     selectedColor = hex;
-    previewEl.innerHTML = renderFolderIcon(selectedColor, 64);
+    previewEl.innerHTML = renderFolderIcon(selectedColor, 56);
     colorPicker.value = selectedColor;
     s.querySelectorAll('#folderSwatchRow .swatch').forEach((sw) => {
       sw.classList.toggle('active', sw.dataset.color.toLowerCase() === selectedColor.toLowerCase());
@@ -1603,8 +1725,9 @@ function openFolderEditor(folder = null, options = {}) {
 function openDeleteFolderSheet(folder) {
   const count = Number(folder.total_movie_count ?? folder.movie_count ?? 0);
   const s = openSheet(`
+    ${sheetHeaderHtml('Collection // Delete')}
     <h2 class="sheet-title display">Delete "${esc(folder.name)}"?</h2>
-    <div style="color:var(--muted); font-size:14px; line-height:1.5; margin-bottom:20px;">
+    <div class="bento-card" style="color:var(--muted); font-size:13.5px; line-height:1.5;">
       This folder contains ${count} ${count === 1 ? 'movie' : 'movies'}. Choose what to do with them.
     </div>
     <div class="action-stack full-width">
@@ -1665,9 +1788,10 @@ function openFolderContextSheet(folder) {
 
   if (!canEdit) {
     const s = openSheet(`
-      <div class="folder-editor-preview" style="padding:4px 0 8px;">${renderFolderIcon(folder.color, 56)}</div>
-      <h2 class="sheet-title display" style="text-align:center;">${esc(folder.name)}</h2>
-      <div style="text-align:center; color:var(--muted); font-size:13px; margin-bottom:18px;">${esc(subText)}</div>
+      ${sheetHeaderHtml('Collection')}
+      <div class="folder-editor-preview" style="padding:4px 0 10px;">${renderFolderIcon(folder.color, 52)}</div>
+      <h2 class="sheet-title display" style="text-align:center; margin-bottom:4px;">${esc(folder.name)}</h2>
+      <div style="text-align:center; color:var(--muted); font-size:12.5px; margin-bottom:18px;">${esc(subText)}</div>
       <div class="action-stack full-width">
         <button type="button" class="btn primary" id="viewFolderBtn">View Folder</button>
         <button type="button" class="btn" id="closeFolderCtxBtn">Cancel</button>
@@ -1683,9 +1807,10 @@ function openFolderContextSheet(folder) {
   }
 
   const s = openSheet(`
-    <div class="folder-editor-preview" style="padding:4px 0 8px;">${renderFolderIcon(folder.color, 56)}</div>
-    <h2 class="sheet-title display" style="text-align:center;">${esc(folder.name)}</h2>
-    <div style="text-align:center; color:var(--muted); font-size:13px; margin-bottom:18px;">${esc(subText)}</div>
+    ${sheetHeaderHtml('Collection // Options')}
+    <div class="folder-editor-preview" style="padding:4px 0 10px;">${renderFolderIcon(folder.color, 52)}</div>
+    <h2 class="sheet-title display" style="text-align:center; margin-bottom:4px;">${esc(folder.name)}</h2>
+    <div style="text-align:center; color:var(--muted); font-size:12.5px; margin-bottom:18px;">${esc(subText)}</div>
     <div class="action-stack full-width">
       <button type="button" class="btn" id="renameFolderBtn">Rename</button>
       <button type="button" class="btn" id="recolorFolderBtn">Change Color</button>
@@ -2119,6 +2244,16 @@ async function dropOutToRoot(ds) {
 }
 
 // ---------- Movie Detail Sheet ----------
+function renderStarRowSvg(rating) {
+  const n = Math.max(0, Math.min(5, Number(rating) || 0));
+  return [1, 2, 3, 4, 5]
+    .map((idx) => {
+      const filled = idx <= n;
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" fill="${filled ? '#F59E0B' : 'none'}" stroke="${filled ? '#F59E0B' : '#404040'}" stroke-width="1.8" stroke-linejoin="round"/></svg>`;
+    })
+    .join('');
+}
+
 function openMovieDetail(movieId) {
   const m = state.movies.find((x) => x.id === movieId);
   if (!m) return;
@@ -2126,58 +2261,98 @@ function openMovieDetail(movieId) {
   const canEdit = m.kind === 'together' || m.added_by === state.me.id;
   const movieFolder = m.folder_id ? state.folders.find((f) => f.id === m.folder_id) : null;
   const posterHtml = m.poster
-    ? `<img src="${esc(m.poster)}" alt="${esc(m.title)}" draggable="false" onerror="this.onerror=null;const d=document.createElement('div');d.className='poster-ph';d.style.padding='40px 10px';d.textContent=this.alt;this.replaceWith(d);">`
+    ? `
+      <img src="${esc(m.poster)}" alt="${esc(m.title)}" draggable="false" onerror="this.onerror=null;const d=document.createElement('div');d.className='poster-ph';d.style.padding='40px 10px';d.textContent=this.alt;this.replaceWith(d);">
+      <div class="detail-poster-hint">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+        <span>Tap to zoom</span>
+      </div>
+    `
     : `<div class="poster-ph" style="padding:40px 10px;">${esc(m.title)}</div>`;
 
   const metaParts = [];
   if (m.year) metaParts.push(m.year);
   if (m.kind === 'together') metaParts.push('Shared');
   else metaParts.push(`Added by ${m.added_by_name || 'Friend'}`);
-  if (movieFolder) metaParts.push(`Folder: ${movieFolder.name}`);
+  if (movieFolder) metaParts.push(movieFolder.name);
 
   const ratingHtml =
     m.status === 'watched' && m.rating
-      ? `<div class="detail-rating-display">RATING: ${m.rating} / 5</div>`
+      ? `
+        <div class="bento-card score-bento">
+          <div>
+            <div class="bento-label">Party Score</div>
+            <div class="score-num-wrap">
+              <span class="score-num">${m.rating}.0</span>
+              <span class="score-denom">/ 5.0</span>
+            </div>
+          </div>
+          <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
+            <div class="score-stars">${renderStarRowSvg(m.rating)}</div>
+            <span class="bento-sub">${m.rating >= 5 ? 'Masterpiece' : m.rating >= 4 ? 'Recommended' : 'Logged'}</span>
+          </div>
+        </div>
+      `
       : '';
 
   const tags = parseTags(m.tags);
-  const tagsHtml = tags.length
-    ? `<div style="display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-bottom:14px;">
-        ${tags.map((t) => `<span class="movie-tag" style="padding:4px 10px; font-size:12px; cursor:pointer;" data-filtertag="${esc(t)}">${esc(t)}</span>`).join('')}
-      </div>`
+  const chipsItems = [];
+  if (movieFolder) {
+    chipsItems.push(`<span class="movie-tag" style="padding:4px 10px; font-size:10.5px; color:#FFFFFF; display:inline-flex; align-items:center; gap:5px;"><span class="folder-crumb-dot" style="background:${esc(movieFolder.color)}; width:6px; height:6px;"></span>${esc(movieFolder.name)}</span>`);
+  }
+  tags.forEach((t) => {
+    chipsItems.push(`<span class="movie-tag" style="padding:4px 10px; font-size:10.5px; cursor:pointer;" data-filtertag="${esc(t)}">${esc(t)}</span>`);
+  });
+  const tagsHtml = chipsItems.length
+    ? `<div class="detail-chips-row">${chipsItems.join('')}</div>`
+    : '';
+
+  const noteHtml = m.note
+    ? `
+      <div class="bento-card">
+        <div class="bento-card-header">
+          <span class="bento-label">Screening Note</span>
+          <span class="bento-sub">${esc(m.added_by_name || 'Member')}</span>
+        </div>
+        <div class="detail-note-box">${esc(m.note)}</div>
+      </div>
+    `
     : '';
 
   const s = openSheet(`
+    ${sheetHeaderHtml(`Archive // #${m.id}`)}
     <div class="detail-poster-wrap">${posterHtml}</div>
     <div class="detail-heading">${esc(m.title)}</div>
     <div class="detail-sub">${metaParts.map(esc).join(' · ')}</div>
     ${tagsHtml}
     ${ratingHtml}
-    ${m.note ? `<div class="detail-note-box">${esc(m.note)}</div>` : ''}
+    ${noteHtml}
 
     ${
       canEdit
         ? `
-          <div class="action-stack" style="justify-content:center;">
+          <div class="action-stack full-width">
             <button class="btn primary" id="toggleWatchBtn">
               ${
                 m.status === 'want'
                   ? `<svg class="btn-icon-svg" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Mark as Watched`
-                  : `<svg class="btn-icon-svg" viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg> Move to Want to Watch`
+                  : `<svg class="btn-icon-svg" viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg> Watched · Move to Want`
               }
             </button>
-            ${
-              m.folder_id
-                ? `<button class="btn" id="removeFromFolderBtn">
-                    <svg class="btn-icon-svg" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="9" y1="14" x2="15" y2="14"/></svg> Remove from Folder
-                  </button>`
-                : ''
-            }
-            <button class="btn" id="editMovieBtn">
-              <svg class="btn-icon-svg" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit Movie
-            </button>
-            <button class="btn danger" id="deleteMovieBtn">
-              <svg class="btn-icon-svg" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Delete Movie
+            <div class="${m.folder_id ? 'action-grid-2' : ''}" style="width:100%;">
+              ${
+                m.folder_id
+                  ? `<button class="btn" id="removeFromFolderBtn">
+                      <svg class="btn-icon-svg" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="9" y1="14" x2="15" y2="14"/></svg> Remove Folder
+                    </button>`
+                  : ''
+              }
+              <button class="btn" id="editMovieBtn" style="${m.folder_id ? '' : 'width:100%; max-width:none;'}">
+                <svg class="btn-icon-svg" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit Details
+              </button>
+            </div>
+            <button class="btn ghost-micro" id="deleteMovieBtn">
+              <svg class="btn-icon-svg" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Delete Movie Record
             </button>
           </div>
         `
@@ -2666,46 +2841,59 @@ function openMovieEditor(movie) {
       };
 
   const s = openSheet(`
-    <h2 class="sheet-title display">${isEdit ? 'Edit Movie' : 'Add Movie'}</h2>
+    ${sheetHeaderHtml(isEdit ? 'Edit Movie' : 'Add Movie to Party')}
 
     <div class="seg-control" id="kindControl">
       <button type="button" class="seg-btn ${draft.kind === 'together' ? 'active' : ''}" data-k="together">Together</button>
       <button type="button" class="seg-btn ${draft.kind === 'personal' ? 'active' : ''}" data-k="personal">Mine</button>
     </div>
 
-    <div class="form-field">
-      <span class="form-label">Title *</span>
+    <div class="bento-card">
+      <div class="bento-card-header">
+        <span class="bento-label">Search Archive *</span>
+        <span class="bento-sub">CATALOG</span>
+      </div>
       <div class="input-wrap">
         <input type="text" id="movieTitle" placeholder="Start typing movie title..." maxlength="120" autocomplete="off" value="${esc(draft.title)}">
         <div class="suggestions-box" id="titleSuggestions" hidden></div>
       </div>
     </div>
 
-    <div class="cover-row">
-      <div class="cover-preview" id="coverPreview"></div>
-      <div class="cover-actions">
-        <button type="button" class="btn" id="pickGalleryBtn">From Gallery</button>
-        <button type="button" class="btn danger" id="removeCoverBtn" style="padding:10px;">Remove</button>
-        <input type="file" id="coverFileInput" accept="image/*" hidden>
+    <div class="editor-top-grid">
+      <div class="bento-card" style="margin-bottom:0; display:flex; flex-direction:column; justify-content:space-between; gap:10px;">
+        <div class="bento-card-header" style="margin-bottom:0;">
+          <span class="bento-label">Cover Art</span>
+        </div>
+        <div style="display:flex; justify-content:center;">
+          <div class="cover-preview" id="coverPreview"></div>
+        </div>
+        <div class="cover-actions" style="justify-content:center;">
+          <button type="button" class="btn" id="pickGalleryBtn" style="height:32px; padding:0 12px; font-size:10.5px;">From Gallery</button>
+          <button type="button" class="btn danger" id="removeCoverBtn" style="height:32px; padding:0 10px; font-size:10.5px;">Remove</button>
+          <input type="file" id="coverFileInput" accept="image/*" hidden>
+        </div>
       </div>
-    </div>
 
-    <div class="form-row">
-      <label class="form-field">
-        <span class="form-label">Year</span>
-        <input type="text" id="movieYear" placeholder="e.g. 2024" maxlength="4" inputmode="numeric">
-      </label>
-      <div class="form-field">
-        <span class="form-label">Status</span>
-        <div class="seg-control" id="statusControl" style="margin:0;">
-          <button class="seg-btn ${draft.status === 'want' ? 'active' : ''}" data-s="want">Want</button>
-          <button class="seg-btn ${draft.status === 'watched' ? 'active' : ''}" data-s="watched">Watched</button>
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <div class="bento-card" style="margin-bottom:0; flex:1; display:flex; flex-direction:column; justify-content:space-between;">
+          <span class="form-label">Year</span>
+          <input type="text" id="movieYear" placeholder="e.g. 2024" maxlength="4" inputmode="numeric" style="text-align:center; font-family:var(--font-mono); font-size:20px; font-weight:700; padding:8px;">
+        </div>
+        <div class="bento-card" style="margin-bottom:0;">
+          <span class="form-label">Status</span>
+          <div class="seg-control" id="statusControl" style="margin:0;">
+            <button type="button" class="seg-btn ${draft.status === 'want' ? 'active' : ''}" data-s="want">Want</button>
+            <button type="button" class="seg-btn ${draft.status === 'watched' ? 'active' : ''}" data-s="watched">Seen</button>
+          </div>
         </div>
       </div>
     </div>
 
-    <div class="form-field" id="ratingContainer" style="display:${draft.status === 'watched' ? 'block' : 'none'};">
-      <span class="form-label">Rating</span>
+    <div class="bento-card" id="ratingContainer" style="display:${draft.status === 'watched' ? 'block' : 'none'};">
+      <div class="bento-card-header">
+        <span class="bento-label">Tactile Rating</span>
+        <span class="bento-sub" id="ratingPreviewLabel" style="color:var(--amber);">${draft.rating ? `★ ${draft.rating}.0 / 5` : 'UNRATED'}</span>
+      </div>
       <div class="rating-dots" id="ratingDots">
         ${[1, 2, 3, 4, 5]
           .map((n) => `<button type="button" class="rating-dot-btn ${draft.rating === n ? 'active' : ''}" data-rate="${n}">${n}</button>`)
@@ -2713,21 +2901,27 @@ function openMovieEditor(movie) {
       </div>
     </div>
 
-    <label class="form-field">
-      <span class="form-label">Hashtags &amp; Categories</span>
+    <div class="bento-card">
+      <div class="bento-card-header">
+        <span class="bento-label">Session Tags</span>
+        <span class="bento-sub">OPTIONAL</span>
+      </div>
       <input type="text" id="movieTags" placeholder="#action #comedy #drama #sci-fi..." maxlength="200" value="${esc(draft.tags)}">
       <div class="tag-suggest-chips" id="tagSuggestChips"></div>
-      <button type="button" class="btn" id="addCustomTagBtn" style="margin-top:8px; height:32px; font-size:12px;">+ Add custom tag</button>
-    </label>
+      <button type="button" class="btn" id="addCustomTagBtn" style="margin-top:10px; height:32px; font-size:10.5px;">+ Add custom tag</button>
+    </div>
 
-    <label class="form-field">
-      <span class="form-label">Note</span>
+    <div class="bento-card">
+      <div class="bento-card-header">
+        <span class="bento-label">Watch Note</span>
+        <span class="bento-sub">OPTIONAL</span>
+      </div>
       <textarea id="movieNote" placeholder="Thoughts, recommendations, notes..." maxlength="500"></textarea>
-    </label>
+    </div>
 
-    <div class="action-stack">
+    <div class="action-stack full-width">
       <button class="btn primary" id="saveMovieBtn">
-        <svg class="btn-icon-svg" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Save
+        <svg class="btn-icon-svg" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> ${isEdit ? 'Save Changes' : 'Save to Library'}
       </button>
       <button type="button" class="btn" id="cancelMovieBtn">Cancel</button>
     </div>
@@ -2760,6 +2954,8 @@ function openMovieEditor(movie) {
     s.querySelectorAll('#ratingDots button').forEach((b) =>
       b.classList.toggle('active', Number(b.dataset.rate) <= (draft.rating || 0))
     );
+    const lbl = $('#ratingPreviewLabel');
+    if (lbl) lbl.textContent = draft.rating ? `★ ${draft.rating}.0 / 5` : 'UNRATED';
   };
 
   updateCoverUi();
@@ -3048,52 +3244,64 @@ function openPartySheet() {
   const link = state.inviteBase ? `${state.inviteBase}${p.code}` : p.code;
 
   const s = openSheet(`
+    ${sheetHeaderHtml('Room // Party')}
     <h2 class="sheet-title display">${esc(p.name)}</h2>
 
-    <div class="form-label" style="margin-bottom:8px;">Members in this Room (${(p.members || []).length})</div>
-    <div style="margin-bottom:14px;">
-      ${(p.members || [])
-        .map(
-          (m) => `
-            <div class="member-row">
-              <div class="avatar" style="width:40px; height:40px; min-width:40px; min-height:40px; border-radius:50%; overflow:hidden; flex-shrink:0;">
-                ${
-                  m.avatar_url
-                    ? `<img src="${esc(m.avatar_url)}" alt="" style="width:100%; height:100%; object-fit:cover; display:block; border-radius:50%;">`
-                    : `<span>${esc((m.name || m.first_name || 'F').slice(0, 1).toUpperCase())}</span>`
-                }
+    <div class="bento-card">
+      <div class="bento-card-header">
+        <span class="bento-label">Members in Room</span>
+        <span class="bento-sub">${(p.members || []).length} ACTIVE</span>
+      </div>
+      <div>
+        ${(p.members || [])
+          .map(
+            (m) => `
+              <div class="member-row">
+                <div class="avatar" style="width:40px; height:40px; min-width:40px; min-height:40px; border-radius:50%; overflow:hidden; flex-shrink:0;">
+                  ${
+                    m.avatar_url
+                      ? `<img src="${esc(m.avatar_url)}" alt="" style="width:100%; height:100%; object-fit:cover; display:block; border-radius:50%;">`
+                      : `<span>${esc((m.name || m.first_name || 'F').slice(0, 1).toUpperCase())}</span>`
+                  }
+                </div>
+                <div class="member-info">
+                  <div class="member-title">${esc(m.name || m.first_name || 'Friend')}${m.id === state.me?.id ? ' (You)' : ''}</div>
+                  <div class="member-sub">${m.username ? '@' + esc(m.username) : 'Active'}</div>
+                </div>
               </div>
-              <div class="member-info">
-                <div class="member-title">${esc(m.name || m.first_name || 'Friend')}${m.id === state.me?.id ? ' (You)' : ''}</div>
-                <div class="member-sub">${m.username ? '@' + esc(m.username) : 'Active'}</div>
-              </div>
-            </div>
-          `
-        )
-        .join('')}
+            `
+          )
+          .join('')}
+      </div>
     </div>
 
-    <div class="section-divider"></div>
-    <div style="font-size:12px; color:var(--muted); text-transform:uppercase;">Invite Code</div>
-    <div class="code-badge">${esc(p.code)}</div>
+    <div class="bento-card">
+      <div class="bento-card-header">
+        <span class="bento-label">Invite Code</span>
+        <span class="bento-sub">SHARE</span>
+      </div>
+      <div class="code-badge" style="margin-bottom:0;">${esc(p.code)}</div>
+    </div>
 
-    <div class="action-stack">
+    <div class="action-stack full-width">
       <button class="btn primary" id="shareInviteBtn">
         <svg class="btn-icon-svg" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> Share Invite Link
       </button>
-      <button class="btn" id="createAnotherPartyBtn">
-        <svg class="btn-icon-svg" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Other Parties
-      </button>
-      <button class="btn danger" id="leavePartyBtn">
-        <svg class="btn-icon-svg" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> Leave Party
-      </button>
+      <div class="action-grid-2">
+        <button class="btn" id="createAnotherPartyBtn">
+          <svg class="btn-icon-svg" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Other Parties
+        </button>
+        <button class="btn danger" id="leavePartyBtn">
+          <svg class="btn-icon-svg" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> Leave
+        </button>
+      </div>
     </div>
 
     ${
       state.parties.length > 1
         ? `
           <div class="section-divider"></div>
-          <div style="font-size:12px; color:var(--muted); text-transform:uppercase; margin-bottom:8px;">Switch Party</div>
+          <div class="form-label" style="margin-bottom:8px;">Switch Party</div>
           ${state.parties
             .map(
               (x) => `
@@ -3162,24 +3370,29 @@ function openPartySheet() {
 
 function openCreateOrJoinSheet() {
   const s = openSheet(`
+    ${sheetHeaderHtml('Room // Create or Join')}
     <h2 class="sheet-title display">New Party</h2>
 
-    <label class="form-field">
-      <span class="form-label">Party Name</span>
-      <input type="text" id="anotherPartyName" placeholder="e.g. Cinema Club" maxlength="40">
-    </label>
-    <div>
-      <button class="btn primary" id="doCreateAnotherBtn">Create</button>
+    <div class="bento-card">
+      <label class="form-field">
+        <span class="form-label">Party Name</span>
+        <input type="text" id="anotherPartyName" placeholder="e.g. Cinema Club" maxlength="40">
+      </label>
+      <div class="action-stack full-width" style="margin-top:8px;">
+        <button class="btn primary" id="doCreateAnotherBtn">Create</button>
+      </div>
     </div>
 
-    <div style="text-align:center; color:var(--muted); font-size:12px; margin:16px 0;">OR</div>
+    <div style="text-align:center; font-family:var(--font-grotesk); letter-spacing:0.2em; color:var(--dim); font-size:10px; margin:12px 0;">OR</div>
 
-    <label class="form-field">
-      <span class="form-label">Invite Code</span>
-      <input type="text" id="anotherJoinCode" placeholder="6-CHAR CODE" autocapitalize="characters" maxlength="6">
-    </label>
-    <div>
-      <button class="btn" id="doJoinAnotherBtn">Join</button>
+    <div class="bento-card">
+      <label class="form-field">
+        <span class="form-label">Invite Code</span>
+        <input type="text" id="anotherJoinCode" placeholder="6-CHAR CODE" autocapitalize="characters" maxlength="6">
+      </label>
+      <div class="action-stack full-width" style="margin-top:8px;">
+        <button class="btn" id="doJoinAnotherBtn">Join</button>
+      </div>
     </div>
   `);
 
@@ -3232,6 +3445,7 @@ function openProfileSheet() {
   const currentName = state.me?.custom_name || state.me?.first_name || '';
 
   const s = openSheet(`
+    ${sheetHeaderHtml('Profile // Settings')}
     <h2 class="sheet-title display">Profile &amp; Settings</h2>
 
     <div class="profile-avatar-wrap">
@@ -3242,64 +3456,75 @@ function openProfileSheet() {
             : `<span>${esc((state.me?.display_name || state.me?.first_name || 'U').slice(0, 1).toUpperCase())}</span>`
         }
       </div>
-      <button type="button" class="btn" id="changeAvatarBtn" style="padding:8px 16px; font-size:13px;">Change Photo</button>
+      <button type="button" class="btn" id="changeAvatarBtn" style="height:34px; padding:0 14px; font-size:11px;">Change Photo</button>
       <input type="file" id="avatarFileInput" accept="image/*" hidden>
     </div>
 
-    <label class="form-field">
-      <span class="form-label">Display Nickname</span>
-      <input type="text" id="profileNameInput" value="${esc(currentName)}" placeholder="Your nickname" maxlength="40">
-    </label>
-    <div style="margin-bottom:16px;">
-      <button type="button" class="btn primary" id="saveProfileBtn">
-        <svg class="btn-icon-svg" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Save Nickname
-      </button>
+    <div class="bento-card">
+      <label class="form-field">
+        <span class="form-label">Display Nickname</span>
+        <input type="text" id="profileNameInput" value="${esc(currentName)}" placeholder="Your nickname" maxlength="40">
+      </label>
+      <div class="action-stack full-width" style="margin-top:8px;">
+        <button type="button" class="btn primary" id="saveProfileBtn">
+          <svg class="btn-icon-svg" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Save Nickname
+        </button>
+      </div>
     </div>
 
-    <div class="section-divider"></div>
-    <div class="form-label" style="margin-bottom:12px;">Accent Color</div>
-    <div class="swatches">${swatchesHtml}</div>
+    <div class="bento-card">
+      <div class="bento-card-header">
+        <span class="bento-label">Accent Color</span>
+        <span class="bento-sub">LED DIODE</span>
+      </div>
+      <div class="swatches">${swatchesHtml}</div>
 
-    <div class="color-row">
-      <span style="font-size:13px; font-weight:500;">Custom color</span>
-      <input type="color" id="customColorPicker" value="${currentAccent}">
-    </div>
+      <div class="color-row">
+        <span style="font-size:12.5px; font-weight:500;">Custom color</span>
+        <input type="color" id="customColorPicker" value="${currentAccent}">
+      </div>
 
-    <div>
-      <button type="button" class="btn" id="resetAccentBtn">Reset Accent</button>
+      <button type="button" class="btn" id="resetAccentBtn" style="width:100%; max-width:none;">Reset Accent</button>
     </div>
 
     ${
       p
         ? `
-          <div class="section-divider"></div>
-          <div class="form-label" style="margin-bottom:12px;">Party: ${esc(p.name)}</div>
-          <label class="form-field">
-            <span class="form-label">Rename Party</span>
-            <input type="text" id="renamePartyInput" value="${esc(p.name)}" maxlength="40">
-          </label>
-          <div style="margin-bottom:12px;">
-            <button type="button" class="btn primary" id="savePartyRenameBtn">Rename</button>
+          <div class="bento-card">
+            <div class="bento-card-header">
+              <span class="bento-label">Party: ${esc(p.name)}</span>
+              <span class="bento-sub">ROOM</span>
+            </div>
+            <label class="form-field">
+              <span class="form-label">Rename Party</span>
+              <input type="text" id="renamePartyInput" value="${esc(p.name)}" maxlength="40">
+            </label>
+            <div class="action-stack full-width" style="margin-top:8px;">
+              <button type="button" class="btn primary" id="savePartyRenameBtn">Rename</button>
+            </div>
           </div>
         `
         : ''
     }
 
-    <div class="section-divider"></div>
-    <div class="form-label">About</div>
-    <div class="about-text">
-      Cinema Party v1.2.0<br>
-      Minimalist movie tracker with editorial serif typography.<br><br>
-      Powered by open source movie catalog.
-    </div>
-
-    <div style="margin-top:16px;">
-      <button type="button" class="btn" id="addToHomeBtn" style="width:100%; justify-content:center;">
-        <svg class="btn-icon-svg" viewBox="0 0 24 24">
-          <path d="M12 2L2 12h3v8h6v-6h2v6h6v-8h3L12 2z"/>
-        </svg>
-        <span id="addToHomeLabel">Add to Home Screen</span>
-      </button>
+    <div class="bento-card">
+      <div class="bento-card-header">
+        <span class="bento-label">About</span>
+        <span class="bento-sub">v1.2.0</span>
+      </div>
+      <div class="about-text">
+        Cinema Party<br>
+        Bionic minimalist shared movie tracker.<br>
+        Powered by open source movie catalog.
+      </div>
+      <div style="margin-top:14px;">
+        <button type="button" class="btn" id="addToHomeBtn" style="width:100%; max-width:none; justify-content:center;">
+          <svg class="btn-icon-svg" viewBox="0 0 24 24">
+            <path d="M12 2L2 12h3v8h6v-6h2v6h6v-8h3L12 2z"/>
+          </svg>
+          <span id="addToHomeLabel">Add to Home Screen</span>
+        </button>
+      </div>
     </div>
   `);
 
