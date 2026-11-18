@@ -98,13 +98,219 @@ export async function revokeSession(env, rawToken) {
     .run();
 }
 
-function timingSafeEqual(a, b) {
+export function timingSafeEqual(a, b) {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) {
     diff |= a[i] ^ b[i];
   }
   return diff === 0;
+}
+
+export function timingSafeEqualHex(aHex, bHex) {
+  if (typeof aHex !== 'string' || typeof bHex !== 'string') return false;
+  const a = hexToBytes(aHex.trim().toLowerCase());
+  const b = hexToBytes(bHex.trim().toLowerCase());
+  if (!a || !b) return false;
+  return timingSafeEqual(a, b);
+}
+
+export function base64UrlEncode(bytes) {
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let binary = '';
+  for (let i = 0; i < arr.length; i++) {
+    binary += String.fromCharCode(arr[i]);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+export function base64UrlDecode(str) {
+  if (typeof str !== 'string' || !str) return null;
+  let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (base64.length % 4 !== 0) base64 += '=';
+  try {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  } catch {
+    return null;
+  }
+}
+
+export async function generatePkcePair() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const verifier = base64UrlEncode(bytes);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  const challenge = base64UrlEncode(new Uint8Array(digest));
+  return { verifier, challenge };
+}
+
+/**
+ * Verifies Telegram Login Widget query parameters using SHA-256(botToken) HMAC key.
+ */
+export async function verifyTelegramLoginWidget(queryParams, botToken, maxAgeSec = 86400) {
+  if (!queryParams || !botToken) return null;
+  const params = queryParams instanceof URLSearchParams
+    ? new URLSearchParams(queryParams.toString())
+    : new URLSearchParams(queryParams);
+
+  const hash = params.get('hash');
+  if (!hash) return null;
+  params.delete('hash');
+  params.delete('challenge');
+
+  const givenBytes = hexToBytes(hash);
+  if (!givenBytes) return null;
+
+  const dataCheckString = [...params.entries()]
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('\n');
+
+  const enc = new TextEncoder();
+  // Telegram Login Widget uses SHA-256(botToken) directly as the HMAC key
+  const secretBytes = await crypto.subtle.digest('SHA-256', enc.encode(botToken));
+  const hmacKey = await crypto.subtle.importKey(
+    'raw',
+    secretBytes,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const calcBytes = new Uint8Array(
+    await crypto.subtle.sign('HMAC', hmacKey, enc.encode(dataCheckString))
+  );
+
+  if (!timingSafeEqual(givenBytes, calcBytes)) return null;
+
+  const authDate = Number(params.get('auth_date') || 0);
+  if (!authDate) return null;
+  const now = Math.floor(Date.now() / 1000);
+  if (now - authDate > maxAgeSec || authDate - now > 300) return null;
+
+  const id = Number(params.get('id') || 0);
+  if (!Number.isInteger(id) || id <= 0) return null;
+
+  return {
+    id,
+    first_name: String(params.get('first_name') || params.get('username') || 'Telegram User'),
+    username: params.get('username') ? String(params.get('username')) : null,
+    photo_url: params.get('photo_url') ? String(params.get('photo_url')) : null,
+  };
+}
+
+let cachedGoogleJwks = { keys: [], fetchedAt: 0 };
+
+async function fetchGoogleJwks(fetchFn, forceRefresh = false) {
+  const now = Date.now();
+  const useCache = fetchFn === fetch;
+  if (useCache && !forceRefresh && cachedGoogleJwks.keys.length > 0 && now - cachedGoogleJwks.fetchedAt < 3600_000) {
+    return cachedGoogleJwks.keys;
+  }
+  const res = await fetchFn('https://www.googleapis.com/oauth2/v3/certs', {
+    headers: { Accept: 'application/json' },
+  });
+  if (!res.ok) {
+    throw new HttpError(502, 'Failed to fetch Google JWKS certificates');
+  }
+  const data = await res.json();
+  const keys = Array.isArray(data?.keys) ? data.keys : [];
+  if (useCache) {
+    cachedGoogleJwks = { keys, fetchedAt: now };
+  }
+  return keys;
+}
+
+/**
+ * Verifies a Google OIDC id_token (RS256) against Google JWKS certs and configured client IDs.
+ */
+export async function verifyGoogleIdToken(idToken, allowedClientIdsRaw, fetchFn = fetch) {
+  const allowedIds = String(allowedClientIdsRaw || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (allowedIds.length === 0) {
+    throw new HttpError(503, 'Google Sign-In is not configured on the server yet (set GOOGLE_CLIENT_ID)');
+  }
+
+  const parts = String(idToken || '').trim().split('.');
+  if (parts.length !== 3) {
+    throw new HttpError(401, 'Invalid Google ID token format');
+  }
+  const [headerB64, payloadB64, sigB64] = parts;
+  const headerBytes = base64UrlDecode(headerB64);
+  const payloadBytes = base64UrlDecode(payloadB64);
+  const sigBytes = base64UrlDecode(sigB64);
+  if (!headerBytes || !payloadBytes || !sigBytes) {
+    throw new HttpError(401, 'Malformed Google ID token encoding');
+  }
+
+  let header;
+  let payload;
+  try {
+    const dec = new TextDecoder();
+    header = JSON.parse(dec.decode(headerBytes));
+    payload = JSON.parse(dec.decode(payloadBytes));
+  } catch {
+    throw new HttpError(401, 'Invalid Google ID token JSON');
+  }
+
+  if (header?.alg !== 'RS256' || !header?.kid) {
+    throw new HttpError(401, 'Unsupported Google ID token algorithm');
+  }
+
+  const iss = String(payload?.iss || '');
+  if (iss !== 'https://accounts.google.com' && iss !== 'accounts.google.com') {
+    throw new HttpError(401, 'Invalid Google token issuer');
+  }
+  if (!allowedIds.includes(String(payload?.aud || ''))) {
+    throw new HttpError(401, 'Google token audience does not match app client ID');
+  }
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (typeof payload?.exp !== 'number' || payload.exp <= nowSec - 30) {
+    throw new HttpError(401, 'Google ID token expired');
+  }
+  if (!payload?.sub || typeof payload.sub !== 'string') {
+    throw new HttpError(401, 'Missing Google account subject');
+  }
+  if (payload?.email_verified === false) {
+    throw new HttpError(401, 'Google email address is not verified');
+  }
+
+  let keys = await fetchGoogleJwks(fetchFn, false);
+  let jwk = keys.find((k) => k.kid === header.kid && (!k.use || k.use === 'sig') && (!k.kty || k.kty === 'RSA'));
+  if (!jwk && fetchFn === fetch) {
+    keys = await fetchGoogleJwks(fetchFn, true);
+    jwk = keys.find((k) => k.kid === header.kid && (!k.use || k.use === 'sig') && (!k.kty || k.kty === 'RSA'));
+  }
+  if (!jwk) {
+    throw new HttpError(401, 'Signing key not found for Google ID token');
+  }
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'jwk',
+    jwk,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['verify']
+  );
+  const signingInput = new TextEncoder().encode(`${headerB64}.${payloadB64}`);
+  const ok = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', cryptoKey, sigBytes, signingInput);
+  if (!ok) {
+    throw new HttpError(401, 'Invalid Google ID token signature');
+  }
+
+  return {
+    sub: String(payload.sub),
+    email: payload.email ? String(payload.email) : null,
+    name: String(payload.name || payload.given_name || 'User').trim().slice(0, 40) || 'User',
+    picture: payload.picture ? String(payload.picture) : null,
+  };
 }
 
 export async function verifyInitData(initData, botToken, maxAgeSec = 86400) {
@@ -197,7 +403,8 @@ export async function authenticate(request, env) {
     throw new HttpError(401, 'Unauthorized');
   }
 
-  if (header.startsWith('tma ')) {
+  const isTmaAuth = header.startsWith('tma ');
+  if (isTmaAuth) {
     const initData = header.slice(4).trim();
     user = await verifyInitData(initData, env.BOT_TOKEN);
   } else if (header.startsWith('dev ') && env.DEV_AUTH === '1') {
@@ -227,6 +434,25 @@ export async function authenticate(request, env) {
   )
     .bind(user.id, user.first_name, user.username, user.photo_url || null)
     .run();
+
+  if (isTmaAuth) {
+    await env.DB.prepare(
+      `INSERT INTO user_identities (provider, provider_uid, user_id, handle, display_name, avatar_url)
+       VALUES ('telegram', ?1, ?2, ?3, ?4, ?5)
+       ON CONFLICT(provider, provider_uid) DO UPDATE SET
+         handle = excluded.handle,
+         display_name = COALESCE(excluded.display_name, user_identities.display_name),
+         avatar_url = COALESCE(excluded.avatar_url, user_identities.avatar_url)`
+    )
+      .bind(
+        String(user.id),
+        user.id,
+        user.username || null,
+        user.first_name || null,
+        user.photo_url || null
+      )
+      .run();
+  }
 
   return user;
 }

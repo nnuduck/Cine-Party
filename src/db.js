@@ -1,4 +1,5 @@
 // D1 database access methods.
+import { generateNativeUserId, HttpError } from './auth.js';
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -519,4 +520,302 @@ export async function deleteFolder(env, folderId, deleteMovies = false) {
     const coverId = row.poster.slice('/api/covers/'.length);
     await deleteCover(env, coverId);
   }
+}
+
+export async function getUserIdentities(env, userId) {
+  const res = await env.DB.prepare(
+    `SELECT provider, email, handle, display_name, avatar_url, linked_at
+     FROM user_identities
+     WHERE user_id = ?1
+     ORDER BY provider ASC`
+  )
+    .bind(userId)
+    .all();
+  return res.results || [];
+}
+
+export async function hasPasswordAuth(env, userId) {
+  const row = await env.DB.prepare('SELECT 1 AS ok FROM auth_accounts WHERE user_id = ?1')
+    .bind(userId)
+    .first();
+  return !!row;
+}
+
+export async function isEmptyStandaloneAccount(env, userId) {
+  if (!Number.isInteger(userId) || userId < 1_000_000_000_000) return false;
+  const row = await env.DB.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM members WHERE user_id = ?1) +
+       (SELECT COUNT(*) FROM movies WHERE added_by = ?1) +
+       (SELECT COUNT(*) FROM folders WHERE user_id = ?1) +
+       (SELECT COUNT(*) FROM auth_accounts WHERE user_id = ?1) AS total`
+  )
+    .bind(userId)
+    .first();
+  return Number(row?.total || 0) === 0;
+}
+
+async function upsertIdentityRow(env, { provider, providerUid, userId, email = null, handle = null, displayName = null, avatarUrl = null }) {
+  await env.DB.prepare(
+    `INSERT INTO user_identities (provider, provider_uid, user_id, email, handle, display_name, avatar_url)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+     ON CONFLICT(provider, provider_uid) DO UPDATE SET
+       user_id = excluded.user_id,
+       email = COALESCE(excluded.email, user_identities.email),
+       handle = COALESCE(excluded.handle, user_identities.handle),
+       display_name = COALESCE(excluded.display_name, user_identities.display_name),
+       avatar_url = COALESCE(excluded.avatar_url, user_identities.avatar_url)`
+  )
+    .bind(provider, String(providerUid), userId, email, handle, displayName, avatarUrl)
+    .run();
+}
+
+/**
+ * Resolves a verified Telegram user to their existing D1 account (preserving Telegram user_id)
+ * or links Telegram into a signed-in user account.
+ */
+export async function resolveOrLinkTelegramUser(
+  env,
+  tgUser,
+  { mode = 'login', linkUserId = null, importedAvatarUrl = null } = {}
+) {
+  const tgId = Number(tgUser.id);
+  const tgUid = String(tgId);
+  const handle = tgUser.username ? String(tgUser.username) : null;
+  const displayName = String(tgUser.first_name || handle || 'Telegram User').trim().slice(0, 40) || 'Telegram User';
+  const safeAvatar = importedAvatarUrl && /^\/api\/covers\/[a-f0-9]+$/.test(importedAvatarUrl)
+    ? importedAvatarUrl
+    : (tgUser.photo_url && /^https:\/\/[^\s"'<>]+$/i.test(tgUser.photo_url) ? tgUser.photo_url : null);
+
+  const existingIdentity = await env.DB.prepare(
+    'SELECT user_id FROM user_identities WHERE provider = ?1 AND provider_uid = ?2'
+  )
+    .bind('telegram', tgUid)
+    .first();
+
+  const existingUserRow = await env.DB.prepare('SELECT id FROM users WHERE id = ?1')
+    .bind(tgId)
+    .first();
+
+  if (mode === 'login') {
+    const targetUserId = existingIdentity ? Number(existingIdentity.user_id) : tgId;
+    await env.DB.prepare(
+      `INSERT INTO users (id, first_name, username, avatar_url) VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT(id) DO UPDATE SET
+         first_name = CASE WHEN users.custom_name IS NULL THEN excluded.first_name ELSE users.first_name END,
+         username = COALESCE(excluded.username, users.username),
+         avatar_url = COALESCE(users.avatar_url, excluded.avatar_url)`
+    )
+      .bind(targetUserId, displayName, handle, safeAvatar)
+      .run();
+
+    await upsertIdentityRow(env, {
+      provider: 'telegram',
+      providerUid: tgUid,
+      userId: targetUserId,
+      handle,
+      displayName,
+      avatarUrl: safeAvatar,
+    });
+    return targetUserId;
+  }
+
+  // mode === 'link'
+  if (!linkUserId) throw new HttpError(401, 'Unauthorized');
+
+  const currentTgLink = await env.DB.prepare(
+    'SELECT provider_uid FROM user_identities WHERE user_id = ?1 AND provider = ?2'
+  )
+    .bind(linkUserId, 'telegram')
+    .first();
+
+  if (currentTgLink) {
+    if (String(currentTgLink.provider_uid) === tgUid) {
+      await upsertIdentityRow(env, {
+        provider: 'telegram',
+        providerUid: tgUid,
+        userId: linkUserId,
+        handle,
+        displayName,
+        avatarUrl: safeAvatar,
+      });
+      return linkUserId;
+    }
+    throw new HttpError(409, 'Another Telegram account is already linked to this profile');
+  }
+
+  const ownerId = existingIdentity
+    ? Number(existingIdentity.user_id)
+    : (existingUserRow ? tgId : null);
+
+  if (ownerId && ownerId !== linkUserId) {
+    if (await isEmptyStandaloneAccount(env, linkUserId)) {
+      await env.DB.prepare('UPDATE user_identities SET user_id = ?1 WHERE user_id = ?2')
+        .bind(ownerId, linkUserId)
+        .run();
+      await env.DB.prepare('DELETE FROM users WHERE id = ?1')
+        .bind(linkUserId)
+        .run();
+      await env.DB.prepare(
+        `UPDATE users SET
+           username = COALESCE(username, ?1),
+           avatar_url = COALESCE(avatar_url, ?2)
+         WHERE id = ?3`
+      )
+        .bind(handle, safeAvatar, ownerId)
+        .run();
+      await upsertIdentityRow(env, {
+        provider: 'telegram',
+        providerUid: tgUid,
+        userId: ownerId,
+        handle,
+        displayName,
+        avatarUrl: safeAvatar,
+      });
+      return ownerId;
+    }
+    throw new HttpError(
+      409,
+      'This Telegram account already has data in Cinema Party. Sign out, sign in with Telegram directly, and link Google from Profile.'
+    );
+  }
+
+  await upsertIdentityRow(env, {
+    provider: 'telegram',
+    providerUid: tgUid,
+    userId: linkUserId,
+    handle,
+    displayName,
+    avatarUrl: safeAvatar,
+  });
+  await env.DB.prepare(
+    `UPDATE users SET
+       username = COALESCE(username, ?1),
+       avatar_url = COALESCE(avatar_url, ?2)
+     WHERE id = ?3`
+  )
+    .bind(handle, safeAvatar, linkUserId)
+    .run();
+  return linkUserId;
+}
+
+/**
+ * Resolves a verified Google user (OIDC sub) to an existing account or creates a new standalone user,
+ * or links Google onto an already authenticated Cinema Party account.
+ */
+export async function resolveOrLinkGoogleUser(
+  env,
+  googleUser,
+  { mode = 'login', linkUserId = null } = {}
+) {
+  const gSub = String(googleUser.sub);
+  const email = googleUser.email ? String(googleUser.email) : null;
+  const displayName = String(googleUser.name || email?.split('@')[0] || 'Google User').trim().slice(0, 40) || 'Google User';
+  const pic = googleUser.picture && /^https:\/\/[^\s"'<>]+$/i.test(googleUser.picture)
+    ? googleUser.picture
+    : null;
+
+  const existingIdentity = await env.DB.prepare(
+    'SELECT user_id FROM user_identities WHERE provider = ?1 AND provider_uid = ?2'
+  )
+    .bind('google', gSub)
+    .first();
+
+  if (mode === 'login') {
+    if (existingIdentity) {
+      const uid = Number(existingIdentity.user_id);
+      await upsertIdentityRow(env, {
+        provider: 'google',
+        providerUid: gSub,
+        userId: uid,
+        email,
+        displayName,
+        avatarUrl: pic,
+      });
+      if (pic) {
+        await env.DB.prepare('UPDATE users SET avatar_url = COALESCE(avatar_url, ?1) WHERE id = ?2')
+          .bind(pic, uid)
+          .run();
+      }
+      return uid;
+    }
+
+    let userId = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const candidate = generateNativeUserId();
+      try {
+        await env.DB.prepare(
+          'INSERT INTO users (id, first_name, custom_name, avatar_url) VALUES (?1, ?2, ?3, ?4)'
+        )
+          .bind(candidate, displayName, displayName, pic)
+          .run();
+        userId = candidate;
+        break;
+      } catch (err) {
+        if (String(err).includes('UNIQUE constraint failed')) continue;
+        throw err;
+      }
+    }
+    if (!userId) {
+      throw new Error('Failed to allocate unique user ID');
+    }
+
+    await upsertIdentityRow(env, {
+      provider: 'google',
+      providerUid: gSub,
+      userId,
+      email,
+      displayName,
+      avatarUrl: pic,
+    });
+    return userId;
+  }
+
+  // mode === 'link'
+  if (!linkUserId) throw new HttpError(401, 'Unauthorized');
+
+  if (existingIdentity && Number(existingIdentity.user_id) === linkUserId) {
+    await upsertIdentityRow(env, {
+      provider: 'google',
+      providerUid: gSub,
+      userId: linkUserId,
+      email,
+      displayName,
+      avatarUrl: pic,
+    });
+    return linkUserId;
+  }
+
+  const currentGoogleLink = await env.DB.prepare(
+    'SELECT provider_uid FROM user_identities WHERE user_id = ?1 AND provider = ?2'
+  )
+    .bind(linkUserId, 'google')
+    .first();
+  if (currentGoogleLink) {
+    throw new HttpError(409, 'Another Google account is already linked to this profile');
+  }
+
+  if (existingIdentity && Number(existingIdentity.user_id) !== linkUserId) {
+    const otherId = Number(existingIdentity.user_id);
+    if (await isEmptyStandaloneAccount(env, otherId)) {
+      await env.DB.prepare('DELETE FROM users WHERE id = ?1').bind(otherId).run();
+    } else {
+      throw new HttpError(409, 'This Google account is already linked to another Cinema Party profile');
+    }
+  }
+
+  await upsertIdentityRow(env, {
+    provider: 'google',
+    providerUid: gSub,
+    userId: linkUserId,
+    email,
+    displayName,
+    avatarUrl: pic,
+  });
+  if (pic) {
+    await env.DB.prepare('UPDATE users SET avatar_url = COALESCE(avatar_url, ?1) WHERE id = ?2')
+      .bind(pic, linkUserId)
+      .run();
+  }
+  return linkUserId;
 }

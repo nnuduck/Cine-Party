@@ -8,10 +8,11 @@
     "db:local": "wrangler d1 migrations apply DB --local",
     "db:remote": "wrangler d1 migrations apply DB --remote",
     "setup": "node scripts/setup.mjs",
+    "setup:google": "node scripts/setup-google.mjs",
     "deploy": "wrangler deploy",
     "webhook": "node scripts/set-webhook.mjs",
     "backup": "node scripts/backup.mjs",
-    "test": "node --test test/auth.test.mjs test/native_auth.test.mjs test/custom_tags.test.mjs test/poster_viewer.test.mjs test/folders.test.mjs test/audit_fixes.test.mjs",
+    "test": "node --test test/auth.test.mjs test/native_auth.test.mjs test/oauth_identities.test.mjs test/custom_tags.test.mjs test/poster_viewer.test.mjs test/folders.test.mjs test/audit_fixes.test.mjs",
     "test:api": "node --test test/api.test.mjs"
   },
   "devDependencies": {

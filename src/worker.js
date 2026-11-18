@@ -3,15 +3,20 @@ import {
   authenticate,
   createSession,
   generateNativeUserId,
+  generatePkcePair,
   generateSaltHex,
   hashPassword,
   HttpError,
   revokeSession,
+  sha256Hex,
+  timingSafeEqualHex,
+  verifyGoogleIdToken,
   verifyPassword,
+  verifyTelegramLoginWidget,
 } from './auth.js';
 import * as db from './db.js';
 import { isAllowedPosterUrl, searchMovies } from './movieSearch.js';
-import { handleTelegramWebhook } from './telegram.js';
+import { handleTelegramWebhook, importTelegramAvatarIfMissing } from './telegram.js';
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -166,6 +171,9 @@ export default {
       await env.DB.prepare(
         "DELETE FROM auth_sessions WHERE datetime(expires_at) <= datetime('now')"
       ).run();
+      await env.DB.prepare(
+        "DELETE FROM auth_challenges WHERE datetime(expires_at) <= datetime('now')"
+      ).run();
     } catch (e) {
       console.error('Scheduled cover cleanup failed:', e);
     }
@@ -191,7 +199,7 @@ function checkRateLimit(userId, maxReq = 10, windowMs = 10000) {
   }
 }
 
-function serializeUserPayload(fullUser) {
+function serializeUserPayload(fullUser, identities = [], hasPassword = false) {
   let customTags = [];
   try {
     const arr = JSON.parse(fullUser?.custom_tags || '[]');
@@ -206,7 +214,66 @@ function serializeUserPayload(fullUser) {
     avatar_url: fullUser.avatar_url || null,
     accent: fullUser.accent || null,
     custom_tags: customTags,
+    has_password: Boolean(hasPassword),
+    identities: Array.isArray(identities)
+      ? identities.map((idRow) => ({
+          provider: idRow.provider,
+          email: idRow.email || null,
+          handle: idRow.handle || null,
+          display_name: idRow.display_name || null,
+          avatar_url: idRow.avatar_url || null,
+          linked_at: idRow.linked_at || '',
+        }))
+      : [],
   };
+}
+
+async function buildUserResponsePayload(env, userId, fallbackUser = null) {
+  const [fullUser, identities, hasPwd] = await Promise.all([
+    db.getUser(env, userId),
+    db.getUserIdentities(env, userId),
+    db.hasPasswordAuth(env, userId),
+  ]);
+  return serializeUserPayload(fullUser || fallbackUser, identities, hasPwd);
+}
+
+function htmlPage(bodyHtml, status = 200) {
+  return new Response(bodyHtml, {
+    status,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
+function renderReturnToAppHtml(challengeId, subtitle = 'Authentication confirmed') {
+  const deepUrl = `cinemaparty://auth/callback?challenge=${challengeId}`;
+  return htmlPage(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Cinema Party — Return to App</title>
+  <style>
+    body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#000;color:#fff;font-family:system-ui,-apple-system,sans-serif;padding:24px;text-align:center}
+    .card{max-width:360px;width:100%;background:#111;border:1px solid #242424;border-radius:22px;padding:28px 22px}
+    .dot{width:8px;height:8px;border-radius:50%;background:#D71921;display:inline-block;margin-right:8px}
+    h1{font-size:18px;letter-spacing:.08em;text-transform:uppercase;margin:14px 0 8px}
+    p{color:#9a9a9a;font-size:14px;line-height:1.5;margin:0 0 22px}
+    a.btn{display:inline-block;background:#D71921;color:#fff;text-decoration:none;font-weight:700;font-size:13px;letter-spacing:.08em;padding:14px 24px;border-radius:999px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="font-size:11px;letter-spacing:.16em;color:#888"><span class="dot"></span>CINEMA // AUTH</div>
+    <h1>${subtitle}</h1>
+    <p>You can return to the Cinema Party Android app now.</p>
+    <a class="btn" href="${deepUrl}">OPEN CINEMA PARTY</a>
+  </div>
+  <script>setTimeout(function(){ window.location.href = ${JSON.stringify(deepUrl)}; }, 180);</script>
+</body>
+</html>`);
 }
 
 async function handleApi(request, env, url, path, method) {
@@ -272,8 +339,8 @@ async function handleApi(request, env, url, path, method) {
     }
 
     const token = await createSession(env, userId);
-    const fullUser = await db.getUser(env, userId);
-    return json({ token, user: serializeUserPayload(fullUser) }, 201);
+    const userPayload = await buildUserResponsePayload(env, userId);
+    return json({ token, user: userPayload }, 201);
   }
 
   if (path === '/api/auth/login' && method === 'POST') {
@@ -296,8 +363,8 @@ async function handleApi(request, env, url, path, method) {
     }
 
     const token = await createSession(env, account.user_id);
-    const fullUser = await db.getUser(env, account.user_id);
-    return json({ token, user: serializeUserPayload(fullUser) });
+    const userPayload = await buildUserResponsePayload(env, account.user_id);
+    return json({ token, user: userPayload });
   }
 
   if (path === '/api/auth/logout' && method === 'POST') {
@@ -307,6 +374,337 @@ async function handleApi(request, env, url, path, method) {
       await revokeSession(env, rawToken);
     }
     return json({ ok: true });
+  }
+
+  // OAuth providers capability discovery
+  if (path === '/api/auth/providers' && method === 'GET') {
+    const googleClientId = String(env.GOOGLE_CLIENT_ID || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)[0] || null;
+    const botUsername = env.BOT_USERNAME || 'cine_party_bot';
+    return json({
+      telegram: {
+        enabled: Boolean(botUsername),
+        bot_username: botUsername,
+      },
+      google: {
+        enabled: Boolean(googleClientId),
+        client_id: googleClientId,
+        web_oauth_enabled: Boolean(googleClientId && env.GOOGLE_CLIENT_SECRET),
+      },
+    });
+  }
+
+  // Native deep-link trampoline (safe HTTPS link -> cinemaparty://auth/callback)
+  if (path === '/api/auth/open' && method === 'GET') {
+    const challengeId = String(url.searchParams.get('challenge') || '').toLowerCase();
+    if (!/^[a-f0-9]{32}$/.test(challengeId)) {
+      return htmlPage('Invalid challenge', 400);
+    }
+    return renderReturnToAppHtml(challengeId, 'Sign-in confirmed');
+  }
+
+  // Start Telegram native bot (or web widget) OAuth challenge
+  if (path === '/api/auth/telegram/start' && method === 'POST') {
+    const ipKey = `tgstart:${request.headers.get('CF-Connecting-IP') || 'anon-ip'}`;
+    checkRateLimit(ipKey, 15, 60000);
+    const body = await request.json().catch(() => ({}));
+    const mode = body.mode === 'link' ? 'link' : 'login';
+    let linkUserId = null;
+    if (mode === 'link') {
+      const authUser = await authenticate(request, env);
+      linkUserId = authUser.id;
+    }
+
+    const challengeId = db.randomHex(16);
+    const clientSecret = db.randomHex(32);
+    const secretHash = await sha256Hex(clientSecret);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+    await env.DB.prepare(
+      `INSERT INTO auth_challenges (id, secret_hash, provider, mode, link_user_id, status, expires_at)
+       VALUES (?1, ?2, 'telegram', ?3, ?4, 'pending', ?5)`
+    )
+      .bind(challengeId, secretHash, mode, linkUserId, expiresAt)
+      .run();
+
+    const botUsername = env.BOT_USERNAME || 'cine_party_bot';
+    return json(
+      {
+        challenge_id: challengeId,
+        client_secret: clientSecret,
+        bot_username: botUsername,
+        tg_deep_link: `tg://resolve?domain=${encodeURIComponent(botUsername)}&start=auth_${challengeId}`,
+        tg_https_link: `https://t.me/${encodeURIComponent(botUsername)}?start=auth_${challengeId}`,
+        web_oauth_url: `${url.origin}/api/auth/telegram/web?challenge=${challengeId}`,
+      },
+      201
+    );
+  }
+
+  // Fallback web page hosting official Telegram Login Widget inside Custom Tab
+  if (path === '/api/auth/telegram/web' && method === 'GET') {
+    const challengeId = String(url.searchParams.get('challenge') || '').toLowerCase();
+    if (!/^[a-f0-9]{32}$/.test(challengeId)) {
+      return htmlPage('Invalid challenge', 400);
+    }
+    const ch = await env.DB.prepare(
+      "SELECT id FROM auth_challenges WHERE id = ?1 AND provider = 'telegram' AND status = 'pending' AND datetime(expires_at) > datetime('now')"
+    )
+      .bind(challengeId)
+      .first();
+    if (!ch) {
+      return htmlPage('Challenge expired. Please request a new sign-in from the Cinema Party app.', 410);
+    }
+    const botUsername = env.BOT_USERNAME || 'cine_party_bot';
+    const callbackUrl = `${url.origin}/api/auth/telegram/oauth-callback?challenge=${challengeId}`;
+    return htmlPage(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Cinema Party — Telegram Login</title>
+  <style>
+    body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#000;color:#fff;font-family:system-ui,-apple-system,sans-serif;padding:24px;text-align:center}
+    .card{max-width:360px;width:100%;background:#111;border:1px solid #242424;border-radius:22px;padding:28px 22px}
+    h1{font-size:18px;letter-spacing:.08em;text-transform:uppercase;margin:0 0 10px}
+    p{color:#9a9a9a;font-size:13px;line-height:1.5;margin:0 0 22px}
+    .widget{display:flex;justify-content:center}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Telegram Sign In</h1>
+    <p>Confirm your Telegram account to sync your Cinema Party rooms and watchlists.</p>
+    <div class="widget">
+      <script async src="https://telegram.org/js/telegram-widget.js?22"
+        data-telegram-login="${botUsername}"
+        data-size="large"
+        data-radius="14"
+        data-auth-url="${callbackUrl}"
+        data-request-access="write"></script>
+    </div>
+  </div>
+</body>
+</html>`);
+  }
+
+  // Telegram Login Widget callback
+  if (path === '/api/auth/telegram/oauth-callback' && method === 'GET') {
+    const challengeId = String(url.searchParams.get('challenge') || '').toLowerCase();
+    if (!/^[a-f0-9]{32}$/.test(challengeId)) {
+      return htmlPage('Invalid challenge', 400);
+    }
+    const challenge = await env.DB.prepare(
+      "SELECT * FROM auth_challenges WHERE id = ?1 AND provider = 'telegram' AND status = 'pending' AND datetime(expires_at) > datetime('now')"
+    )
+      .bind(challengeId)
+      .first();
+    if (!challenge) {
+      return htmlPage('Authentication challenge expired', 410);
+    }
+    const tgUser = await verifyTelegramLoginWidget(url.searchParams, env.BOT_TOKEN);
+    if (!tgUser) {
+      await env.DB.prepare("UPDATE auth_challenges SET status = 'error', error_message = ?1 WHERE id = ?2")
+        .bind('Invalid Telegram signature', challengeId)
+        .run();
+      return htmlPage('Invalid Telegram signature', 401);
+    }
+    try {
+      const resolvedUserId = await db.resolveOrLinkTelegramUser(env, tgUser, {
+        mode: challenge.mode,
+        linkUserId: challenge.link_user_id ? Number(challenge.link_user_id) : null,
+      });
+      await importTelegramAvatarIfMissing(env, tgUser.id, resolvedUserId);
+      await env.DB.prepare("UPDATE auth_challenges SET status = 'approved', resolved_user_id = ?1 WHERE id = ?2")
+        .bind(resolvedUserId, challengeId)
+        .run();
+      return Response.redirect(`${url.origin}/api/auth/open?challenge=${challengeId}`, 302);
+    } catch (err) {
+      const msg = err?.message || 'Telegram authentication failed';
+      await env.DB.prepare("UPDATE auth_challenges SET status = 'error', error_message = ?1 WHERE id = ?2")
+        .bind(msg, challengeId)
+        .run();
+      return htmlPage(msg, err?.status || 400);
+    }
+  }
+
+  // Start Google PKCE OAuth 2.0 flow for Chrome Custom Tab fallback
+  if (path === '/api/auth/google/start' && method === 'POST') {
+    const clientId = String(env.GOOGLE_CLIENT_ID || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)[0];
+    if (!clientId || !env.GOOGLE_CLIENT_SECRET) {
+      throw new HttpError(
+        503,
+        'Google Web OAuth requires GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET configured on server'
+      );
+    }
+    const body = await request.json().catch(() => ({}));
+    const mode = body.mode === 'link' ? 'link' : 'login';
+    let linkUserId = null;
+    if (mode === 'link') {
+      const authUser = await authenticate(request, env);
+      linkUserId = authUser.id;
+    }
+    const challengeId = db.randomHex(16);
+    const clientSecret = db.randomHex(32);
+    const secretHash = await sha256Hex(clientSecret);
+    const { verifier, challenge: codeChallenge } = await generatePkcePair();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+    await env.DB.prepare(
+      `INSERT INTO auth_challenges (id, secret_hash, provider, mode, link_user_id, pkce_verifier, status, expires_at)
+       VALUES (?1, ?2, 'google', ?3, ?4, ?5, 'pending', ?6)`
+    )
+      .bind(challengeId, secretHash, mode, linkUserId, verifier, expiresAt)
+      .run();
+
+    const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    authUrl.searchParams.set('client_id', clientId);
+    authUrl.searchParams.set('redirect_uri', `${url.origin}/api/auth/google/callback`);
+    authUrl.searchParams.set('response_type', 'code');
+    authUrl.searchParams.set('scope', 'openid email profile');
+    authUrl.searchParams.set('state', challengeId);
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+    authUrl.searchParams.set('prompt', 'select_account');
+
+    return json(
+      {
+        challenge_id: challengeId,
+        client_secret: clientSecret,
+        auth_url: authUrl.toString(),
+      },
+      201
+    );
+  }
+
+  // Google OAuth 2.0 PKCE callback
+  if (path === '/api/auth/google/callback' && method === 'GET') {
+    const challengeId = String(url.searchParams.get('state') || '').toLowerCase();
+    const code = url.searchParams.get('code');
+    const oauthErr = url.searchParams.get('error');
+    if (!/^[a-f0-9]{32}$/.test(challengeId)) {
+      return htmlPage('Invalid OAuth state', 400);
+    }
+    const challenge = await env.DB.prepare(
+      "SELECT * FROM auth_challenges WHERE id = ?1 AND provider = 'google' AND status = 'pending' AND datetime(expires_at) > datetime('now')"
+    )
+      .bind(challengeId)
+      .first();
+    if (!challenge) {
+      return htmlPage('Google sign-in challenge expired', 410);
+    }
+    if (oauthErr || !code) {
+      const msg = oauthErr === 'access_denied' ? 'Google sign-in cancelled' : (oauthErr || 'Missing Google authorization code');
+      await env.DB.prepare("UPDATE auth_challenges SET status = 'cancelled', error_message = ?1 WHERE id = ?2")
+        .bind(msg, challengeId)
+        .run();
+      return Response.redirect(`${url.origin}/api/auth/open?challenge=${challengeId}`, 302);
+    }
+    const clientId = String(env.GOOGLE_CLIENT_ID || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)[0];
+    try {
+      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          code,
+          client_id: clientId,
+          client_secret: env.GOOGLE_CLIENT_SECRET,
+          redirect_uri: `${url.origin}/api/auth/google/callback`,
+          grant_type: 'authorization_code',
+          code_verifier: challenge.pkce_verifier || '',
+        }).toString(),
+      });
+      const tokenData = await tokenRes.json().catch(() => null);
+      if (!tokenRes.ok || !tokenData?.id_token) {
+        throw new HttpError(401, tokenData?.error_description || 'Google token exchange failed');
+      }
+      const googleUser = await verifyGoogleIdToken(tokenData.id_token, env.GOOGLE_CLIENT_ID);
+      const resolvedUserId = await db.resolveOrLinkGoogleUser(env, googleUser, {
+        mode: challenge.mode,
+        linkUserId: challenge.link_user_id ? Number(challenge.link_user_id) : null,
+      });
+      await env.DB.prepare("UPDATE auth_challenges SET status = 'approved', resolved_user_id = ?1 WHERE id = ?2")
+        .bind(resolvedUserId, challengeId)
+        .run();
+      return Response.redirect(`${url.origin}/api/auth/open?challenge=${challengeId}`, 302);
+    } catch (err) {
+      const msg = err?.message || 'Google sign-in failed';
+      await env.DB.prepare("UPDATE auth_challenges SET status = 'error', error_message = ?1 WHERE id = ?2")
+        .bind(msg, challengeId)
+        .run();
+      return Response.redirect(`${url.origin}/api/auth/open?challenge=${challengeId}`, 302);
+    }
+  }
+
+  // Poll pending Telegram/Google OAuth challenge & consume once approved
+  if (path === '/api/auth/challenge/poll' && method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const challengeId = String(body.challenge_id || '').toLowerCase();
+    const clientSecret = String(body.client_secret || '');
+    if (!/^[a-f0-9]{32}$/.test(challengeId) || !clientSecret) {
+      throw new HttpError(400, 'Invalid challenge credentials');
+    }
+    const challenge = await env.DB.prepare('SELECT * FROM auth_challenges WHERE id = ?1')
+      .bind(challengeId)
+      .first();
+    if (!challenge) {
+      throw new HttpError(404, 'Authentication challenge not found');
+    }
+    const presentedHash = await sha256Hex(clientSecret);
+    if (!timingSafeEqualHex(challenge.secret_hash, presentedHash)) {
+      throw new HttpError(401, 'Invalid challenge secret');
+    }
+
+    const expired = Date.parse(challenge.expires_at) <= Date.now();
+    if (challenge.status === 'pending' && expired) {
+      await env.DB.prepare("UPDATE auth_challenges SET status = 'error', error_message = ?1 WHERE id = ?2")
+        .bind('Authentication challenge expired', challengeId)
+        .run();
+      return json({ status: 'error', error: 'Authentication challenge expired' });
+    }
+    if (challenge.status === 'pending') {
+      return json({ status: 'pending' });
+    }
+    if (challenge.status === 'cancelled' || challenge.status === 'error') {
+      return json({ status: 'error', error: challenge.error_message || 'Authentication cancelled' });
+    }
+    if (challenge.status !== 'approved' || !challenge.resolved_user_id) {
+      return json({ status: 'error', error: 'Authentication challenge already used' });
+    }
+
+    const consumeRes = await env.DB.prepare(
+      "UPDATE auth_challenges SET status = 'consumed' WHERE id = ?1 AND status = 'approved'"
+    )
+      .bind(challengeId)
+      .run();
+    if (!consumeRes?.meta?.changes) {
+      return json({ status: 'error', error: 'Authentication challenge already used' });
+    }
+
+    const uid = Number(challenge.resolved_user_id);
+    const token = await createSession(env, uid);
+    const userPayload = await buildUserResponsePayload(env, uid);
+    return json({ status: 'authenticated', token, user: userPayload });
+  }
+
+  // Native Android CredentialManager Sign-In with Google id_token
+  if (path === '/api/auth/google/id-token' && method === 'POST') {
+    const ipKey = `gid:${request.headers.get('CF-Connecting-IP') || 'anon-ip'}`;
+    checkRateLimit(ipKey, 15, 60000);
+    const body = await request.json().catch(() => ({}));
+    const googleUser = await verifyGoogleIdToken(body.id_token, env.GOOGLE_CLIENT_ID);
+    const userId = await db.resolveOrLinkGoogleUser(env, googleUser, { mode: 'login' });
+    const token = await createSession(env, userId);
+    const userPayload = await buildUserResponsePayload(env, userId);
+    return json({ token, user: userPayload });
   }
 
   // Movie search route (open catalog + optional TMDB, auth required)
@@ -386,10 +784,43 @@ async function handleApi(request, env, url, path, method) {
     }
 
     return json({
-      user: serializeUserPayload(fullUser),
+      user: await buildUserResponsePayload(env, user.id, fullUser),
       parties,
       invite_base: inviteBase,
     });
+  }
+
+  // Link Google id_token into currently authenticated profile
+  if (path === '/api/me/identities/google/id-token' && method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const googleUser = await verifyGoogleIdToken(body.id_token, env.GOOGLE_CLIENT_ID);
+    const targetUserId = await db.resolveOrLinkGoogleUser(env, googleUser, {
+      mode: 'link',
+      linkUserId: user.id,
+    });
+    return json({ user: await buildUserResponsePayload(env, targetUserId) });
+  }
+
+  // Unlink an OAuth identity (requires at least one remaining login method)
+  const unlinkMatch = path.match(/^\/api\/me\/identities\/(telegram|google)$/);
+  if (unlinkMatch && method === 'DELETE') {
+    const provider = unlinkMatch[1];
+    const [identities, hasPwd] = await Promise.all([
+      db.getUserIdentities(env, user.id),
+      db.hasPasswordAuth(env, user.id),
+    ]);
+    const hasTarget = identities.some((i) => i.provider === provider);
+    if (!hasTarget) {
+      throw new HttpError(404, 'Linked account not found');
+    }
+    const remainingOtherIdentities = identities.filter((i) => i.provider !== provider);
+    if (remainingOtherIdentities.length === 0 && !hasPwd) {
+      throw new HttpError(400, 'Cannot unlink your sole sign-in method');
+    }
+    await env.DB.prepare('DELETE FROM user_identities WHERE user_id = ?1 AND provider = ?2')
+      .bind(user.id, provider)
+      .run();
+    return json({ user: await buildUserResponsePayload(env, user.id) });
   }
 
   // GET /api/me/custom-tags
@@ -437,7 +868,7 @@ async function handleApi(request, env, url, path, method) {
       name: body.name,
       avatarUrl: body.avatar_url,
     });
-    return json({ user: serializeUserPayload(updated) });
+    return json({ user: await buildUserResponsePayload(env, user.id, updated) });
   }
 
   // PATCH /api/me/accent
